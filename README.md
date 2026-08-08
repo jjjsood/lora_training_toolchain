@@ -272,6 +272,14 @@ One image. Everything mutable is a mount.
 docker build -t lorafactory .
 ```
 
+Or pull the prebuilt image instead of building locally — `.github/workflows/docker-publish.yml` builds and pushes it to GitHub Container Registry on every push to `main`/`master` and on `v*` tags:
+
+```bash
+docker pull ghcr.io/jjjsood/lora_training_toolchain:latest
+```
+
+(GHCR packages default to private on first publish — set the package visibility to public once under github.com/jjjsood → Packages settings, otherwise pulling from a GPU cluster needs `docker login ghcr.io` first.)
+
 The image provisions two Python environments — `/opt/venv-tool` for this repo, `/opt/venv-kohya` for the training deps — plus an sd-scripts checkout pinned to `v0.11.1` and asserted against its exact commit, so a moved tag fails the build loudly instead of silently training against different code. Base image is CUDA 12.8, matching the cu128 torch wheels (Blackwell / sm_120).
 
 The entrypoint execs the `lorafactory` CLI, so container args are CLI args:
