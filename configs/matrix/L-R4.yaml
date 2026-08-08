@@ -1,0 +1,10 @@
+# L-R4 — rank/magnitude axis: rank 4, all adapted linears, blocks 0-23.
+adapter_id: L-R4
+extends: ../base.yaml
+overrides_allowed: [target]
+target:
+  scope: transformer
+  blocks: [0, 23]
+  module_classes: [attn, mlp]
+  rank: 4
+  alpha: 4

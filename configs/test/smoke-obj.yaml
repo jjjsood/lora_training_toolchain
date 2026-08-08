@@ -1,0 +1,48 @@
+# T-SMOKE-OBJ — the OBJ-axis counterpart of smoke.yaml.
+#
+# Exists so the O-* overlays have data to point at. Two documented shortfalls
+# against the OBJ spec, which asks for 25-40 images of one rare object under
+# the trigger `sks_lantern`:
+#
+#   * google/dreambooth ships 4-6 images per subject, not 25-40.
+#   * it has no lantern; `candle` is the nearest single rigid object, so the
+#     trigger token here is `sks_candle`.
+#
+# Fine for a smoke run, not a substitute for the real OBJ set.
+adapter_id: T-SMOKE-OBJ
+extends: ../base.yaml
+budget_exempt: true
+overrides_allowed: [train, dataset]
+
+train:
+  seed: 20260808
+  max_train_steps: 50
+  learning_rate: 0.0001
+  train_batch_size: 1
+  optimizer_type: AdamW8bit
+  mixed_precision: bf16
+  save_precision: bf16
+  save_model_as: safetensors
+  gradient_checkpointing: true
+  cache_latents: true
+  cache_latents_to_disk: true
+  cache_text_encoder_outputs: true
+  cache_text_encoder_outputs_to_disk: true
+  max_data_loader_n_workers: 0
+  blocks_to_swap: 0
+  logging_dir: logs
+
+dataset:
+  name: OBJ
+  path: OBJ
+  manifest: OBJ/manifest.csv
+  resolution: 1024
+  source:
+    repo: google/dreambooth
+    revision: dc09c9867a20ecaa1f1f6f079a4e6515cce40cc6
+    files: ["dataset/candle/*.jpg"]
+    caption: a photo of sks_candle
+    author: Google Research
+    licence: CC-BY-4.0
+    licence_url: https://creativecommons.org/licenses/by/4.0/
+    acquisition_date: "2026-08-08"

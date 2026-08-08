@@ -1,0 +1,14 @@
+# L-T — negative control: text encoders only, zero transformer modules.
+# All three gating axes (module type, site-of-action, rank) are no-ops here
+# because nothing in the transformer is adapted. No T5: diffusers 0.39 has no
+# `text_encoder_3` LoRA loading path for StableDiffusion3Pipeline, so a
+# T5-adapted checkpoint would load silently incomplete on the instrument side.
+# That does not weaken the control — it still adapts zero transformer params.
+adapter_id: L-T
+extends: ../base.yaml
+overrides_allowed: [target]
+target:
+  scope: text_encoders
+  te_encoders: [clip_l, clip_g]
+  rank: 16
+  alpha: 16

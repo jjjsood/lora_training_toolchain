@@ -1,0 +1,9 @@
+# R-F — norm-matched random control paired against L-F (CAP-27).
+# Gaussian-random A/B per module, rescaled per module so ||dW||_F matches the
+# reference adapter module-for-module. Same magnitude, same placement,
+# nothing learned.
+adapter_id: R-F
+reference_adapter: L-F
+reference_config: ../matrix/L-F.yaml
+seed: 20260808
+tolerance_rel: 1.0e-4

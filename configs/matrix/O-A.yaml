@@ -1,0 +1,15 @@
+# O-A — objective x module type (weight space only), paired against L-A.
+adapter_id: O-A
+extends: ../base.yaml
+overrides_allowed: [target, dataset]
+target:
+  scope: transformer
+  blocks: [0, 23]
+  module_classes: [attn]
+  rank: 16
+  alpha: 16
+dataset:
+  name: OBJ
+  path: OBJ
+  manifest: OBJ/manifest.csv
+  resolution: 1024

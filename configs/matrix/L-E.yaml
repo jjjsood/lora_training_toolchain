@@ -1,0 +1,13 @@
+# L-E — site-of-action ground truth, early: blocks 0-7 only, rank 16.
+# Method validation: gating this to blocks 0-7 must reproduce the full-LoRA
+# output. Kept in the exact `overrides_allowed: [target]` flow style — a
+# budget test string-replaces this line.
+adapter_id: L-E
+extends: ../base.yaml
+overrides_allowed: [target]
+target:
+  scope: transformer
+  blocks: [0, 7]
+  module_classes: [attn, mlp]
+  rank: 16
+  alpha: 16

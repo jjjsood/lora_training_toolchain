@@ -1,0 +1,10 @@
+# L-R64 — rank/magnitude axis: rank 64, all adapted linears, blocks 0-23.
+adapter_id: L-R64
+extends: ../base.yaml
+overrides_allowed: [target]
+target:
+  scope: transformer
+  blocks: [0, 23]
+  module_classes: [attn, mlp]
+  rank: 64
+  alpha: 64

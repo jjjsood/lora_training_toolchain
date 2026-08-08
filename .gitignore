@@ -1,0 +1,20 @@
+# env / build
+# docker compose reads .env automatically; it holds HF_TOKEN, which is a
+# credential and must never be committed.
+.env
+.venv/
+__pycache__/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.cache/
+
+# runtime output
+runs/
+models/
+# Image data stays out of the repo, but the contract it must satisfy does not.
+datasets/*
+!datasets/README.md
+
+# misc
+*.log

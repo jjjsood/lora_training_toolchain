@@ -1,0 +1,6 @@
+# R-M — norm-matched random control paired against L-M (CAP-27).
+adapter_id: R-M
+reference_adapter: L-M
+reference_config: ../matrix/L-M.yaml
+seed: 20260808
+tolerance_rel: 1.0e-4

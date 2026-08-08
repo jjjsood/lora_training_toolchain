@@ -1,0 +1,6 @@
+# R-A — norm-matched random control paired against L-A (CAP-27).
+adapter_id: R-A
+reference_adapter: L-A
+reference_config: ../matrix/L-A.yaml
+seed: 20260808
+tolerance_rel: 1.0e-4

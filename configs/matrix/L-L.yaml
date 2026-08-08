@@ -1,0 +1,10 @@
+# L-L — site-of-action ground truth, late: blocks 16-23 only, rank 16.
+adapter_id: L-L
+extends: ../base.yaml
+overrides_allowed: [target]
+target:
+  scope: transformer
+  blocks: [16, 23]
+  module_classes: [attn, mlp]
+  rank: 16
+  alpha: 16

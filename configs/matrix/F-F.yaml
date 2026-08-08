@@ -1,0 +1,43 @@
+# F-F — FLUX replication of L-F. Trained on FLUX.1-dev, applied to
+# FLUX.1-schnell in the instrument. That cross-checkpoint transfer is an
+# assumption, not a verified property, and must be stated wherever F-F results
+# are reported. fp8_base + blocks_to_swap exist because FLUX.1-dev LoRA
+# training does not fit in 16 GB VRAM at bf16 with the full transformer
+# resident; they are FLUX-side only and do not touch the SD3 matched budget.
+adapter_id: F-F
+extends: ../base.yaml
+overrides_allowed: [model, target, train]
+model:
+  arch: flux
+  train_repo: black-forest-labs/FLUX.1-dev
+  train_revision: 3de623fc3c33e44ffbe2bad470d0f45bccf2eb21
+  train_file: flux1-dev.safetensors
+  eval_repo: black-forest-labs/FLUX.1-dev
+  eval_revision: 3de623fc3c33e44ffbe2bad470d0f45bccf2eb21
+  ae: ae.safetensors
+  text_encoders:
+    clip_l: text_encoders/clip_l.safetensors
+    t5xxl: text_encoders/t5xxl_fp16.safetensors
+target:
+  scope: transformer
+  module_classes: [attn, mlp]
+  rank: 16
+  alpha: 16
+train:
+  seed: 20260808
+  max_train_steps: 2000
+  learning_rate: 0.0001
+  train_batch_size: 1
+  optimizer_type: AdamW8bit
+  mixed_precision: bf16
+  save_precision: bf16
+  save_model_as: safetensors
+  gradient_checkpointing: true
+  cache_latents: true
+  cache_latents_to_disk: true
+  cache_text_encoder_outputs: true
+  cache_text_encoder_outputs_to_disk: true
+  max_data_loader_n_workers: 0
+  blocks_to_swap: 16
+  fp8_base: true
+  logging_dir: logs

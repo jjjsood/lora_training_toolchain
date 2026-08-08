@@ -1,0 +1,59 @@
+# T-SMOKE — the "does this thing train at all" config.
+#
+# Deliberately NOT part of the placement matrix: it is budget_exempt, it runs
+# 50 steps instead of 2000, and it declares where its images come from so the
+# container can rebuild them (`dataset.source`, consumed by fetch-dataset).
+# Nothing here may be cited as a result; it exists to turn a green check suite
+# into a green *run*.
+#
+#   docker compose run --rm lorafactory-test
+#
+# The train section is repeated in full on purpose: loader.resolve() replaces a
+# declared section WHOLESALE (config/loader.py), it does not merge keys. Every
+# value below is byte-identical to configs/base.yaml except max_train_steps.
+adapter_id: T-SMOKE
+extends: ../base.yaml
+budget_exempt: true
+overrides_allowed: [train, dataset]
+
+train:
+  seed: 20260808
+  max_train_steps: 50
+  learning_rate: 0.0001
+  train_batch_size: 1
+  optimizer_type: AdamW8bit
+  mixed_precision: bf16
+  save_precision: bf16
+  save_model_as: safetensors
+  gradient_checkpointing: true
+  cache_latents: true
+  cache_latents_to_disk: true
+  cache_text_encoder_outputs: true
+  cache_text_encoder_outputs_to_disk: true
+  max_data_loader_n_workers: 0
+  blocks_to_swap: 0
+  logging_dir: logs
+
+dataset:
+  name: STYLE
+  path: STYLE
+  manifest: STYLE/manifest.csv
+  resolution: 1024
+  # 272 aurora photographs at a true 1024x1024, stored as one parquet. The
+  # revision is the repo's real HEAD (read from the HF API), so a re-fetch on
+  # another machine gets the same pixels.
+  #
+  # Honest provenance: this repo declares no licence and no author on the Hub.
+  # manifest.csv forbids empty provenance columns, so they say `unknown` rather
+  # than something more comfortable. Good enough to prove the pipeline runs,
+  # NOT good enough to cite.
+  source:
+    repo: huggan/few-shot-aurora
+    revision: ccf645535bc3b5f755d03567374780ae9473d66b
+    parquet: data/train-00000-of-00001.parquet
+    limit: 50
+    caption: a photograph in the sks_aurora style
+    author: unknown
+    licence: unknown
+    licence_url: https://huggingface.co/datasets/huggan/few-shot-aurora
+    acquisition_date: "2026-08-08"

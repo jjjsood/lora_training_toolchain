@@ -1,0 +1,79 @@
+# Static definition only. Build/run by hand once the image itself is ready.
+
+services:
+  lorafactory:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: lorafactory:latest
+
+    # RAM guard: this container is memory-limited as host OOM protection.
+    # Override with TOOLCHAIN_MEM_LIMIT for a larger box; memswap_limit is
+    # kept equal to mem_limit so no swap is granted beyond the RAM cap.
+    mem_limit: ${TOOLCHAIN_MEM_LIMIT:-40g}
+    memswap_limit: ${TOOLCHAIN_MEM_LIMIT:-40g}
+    shm_size: 8g
+
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+    environment:
+      - HF_TOKEN=${HF_TOKEN:-}
+      - CIVITAI_TOKEN=${CIVITAI_TOKEN:-}
+
+    volumes:
+      - ./configs:/workspace/configs:ro
+      - ./datasets:/workspace/datasets:ro
+      - models-cache:/workspace/models
+      - ./runs:/workspace/runs
+
+    working_dir: /workspace
+
+  # The smoke path: one command that fetches the pinned weights, rebuilds the
+  # dataset declared in configs/test/smoke.yaml and trains 50 steps.
+  #
+  #   docker compose run --rm lorafactory-test
+  #
+  # Two mounts differ from the service above, on purpose:
+  #   - datasets is read-WRITE here, because this is the one service allowed to
+  #     create image data. The matched-budget run above keeps its :ro guarantee.
+  #   - models is a host bind rather than the named volume, so the ~17 GB of SD3
+  #     weights are shared with a host-side `fetch-models` instead of downloaded
+  #     a second time into the volume.
+  lorafactory-test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: lorafactory:latest
+
+    mem_limit: ${TOOLCHAIN_MEM_LIMIT:-40g}
+    memswap_limit: ${TOOLCHAIN_MEM_LIMIT:-40g}
+    shm_size: 8g
+
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+    environment:
+      - HF_TOKEN=${HF_TOKEN:-}
+
+    volumes:
+      - ./configs:/workspace/configs:ro
+      - ./datasets:/workspace/datasets
+      - ./models:/workspace/models
+      - ./runs:/workspace/runs
+
+    working_dir: /workspace
+    command: ["test-run", "--config", "/workspace/configs/test/smoke.yaml"]
+
+volumes:
+  models-cache:

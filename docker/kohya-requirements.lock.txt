@@ -1,0 +1,55 @@
+# Hand-pinned requirement lock for /opt/venv-kohya (the kohya-ss/sd-scripts
+# training environment inside the Docker image).
+#
+# Derived from kohya-ss/sd-scripts v0.11.1's own requirements.txt
+# (.cache/sd-scripts/requirements.txt, shallow-cloned at tag v0.11.1 for
+# reference — see Dockerfile) plus a CUDA 12.4-matched torch stack.
+# sd-scripts itself is installed separately as an editable package
+# (`uv pip install -e /opt/sd-scripts`) once this venv exists; it is not
+# listed as `-e .` here because this lock file is consumed outside the
+# sd-scripts checkout.
+#
+# The image build is the authority that actually resolves and verifies
+# these pins; the hand-pinning here is a starting point for it.
+
+--extra-index-url https://download.pytorch.org/whl/cu128
+
+# torch stack, CUDA 12.8 wheels (matches the nvidia/cuda:12.8.1 base image).
+#
+# cu128, not cu124: the target GPU is a Blackwell card (RTX 50-series, GB20x,
+# compute capability sm_120). torch's cu124 wheels are built for sm_90 and
+# below, so training on Blackwell aborts with "no kernel image is available
+# for execution on the device" — after the environment has been built and the
+# weights loaded. torch 2.7 is the first release shipping sm_120 kernels.
+#
+# sd-scripts v0.11.1 does not pin torch itself (its requirements.txt lists no
+# torch line), so choosing the torch stack here is not fighting an upstream
+# pin. 2.7.1 is the oldest release that supports the GPU, which keeps it
+# closest to the versions sd-scripts v0.11.1 was developed against.
+torch==2.7.1+cu128
+torchvision==0.22.1+cu128
+
+# sd-scripts v0.11.1 pins, verbatim where sd-scripts pins a version
+accelerate==1.6.0
+transformers==4.54.1
+diffusers[torch]==0.32.1
+ftfy==6.3.1
+opencv-python==4.10.0.84
+einops==0.7.0
+# Provides AdamW8bit (base.yaml's optimizer_type) — so it needs sm_120 kernels
+# for the same reason torch does. 0.45.x predates Blackwell support.
+bitsandbytes==0.48.2
+lion-pytorch==0.2.3
+schedulefree==1.4
+pytorch-optimizer==3.10.0
+prodigy-plus-schedule-free==1.9.2
+prodigyopt==1.1.2
+tensorboard==2.18.0
+safetensors==0.4.5
+toml==0.10.2
+voluptuous==0.15.2
+huggingface-hub==0.34.3
+imagesize==1.4.1
+numpy==1.26.4
+rich==14.1.0
+sentencepiece==0.2.1

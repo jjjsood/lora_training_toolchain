@@ -1,0 +1,30 @@
+# X-OVERFIT — fallback: deliberately over-trained retrain for a checkpoint
+# that failed the E_img gate at canonical steps (CAP-26 retrain path).
+# Exempt from matched budget (non-canonical step count and LR).
+adapter_id: X-OVERFIT
+extends: ../base.yaml
+overrides_allowed: [target, train]
+budget_exempt: true
+target:
+  scope: transformer
+  blocks: [0, 23]
+  module_classes: [attn, mlp]
+  rank: 16
+  alpha: 16
+train:
+  seed: 20260808
+  max_train_steps: 6000
+  learning_rate: 0.0002
+  train_batch_size: 1
+  optimizer_type: AdamW8bit
+  mixed_precision: bf16
+  save_precision: bf16
+  save_model_as: safetensors
+  gradient_checkpointing: true
+  cache_latents: true
+  cache_latents_to_disk: true
+  cache_text_encoder_outputs: true
+  cache_text_encoder_outputs_to_disk: true
+  max_data_loader_n_workers: 0
+  blocks_to_swap: 0
+  logging_dir: logs

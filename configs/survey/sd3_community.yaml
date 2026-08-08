@@ -1,0 +1,23 @@
+# Community SD3-Medium checkpoint survey (CAP-28).
+# Four checkpoints (two style, one character, one concept), each must pass
+# weight introspection (verify-keys) and the E_img gate before use.
+base_arch: sd3
+gate_config: ../gate/e_img.yaml
+targets:
+  - slot: style_1
+    source: civitai
+    status: pending_acquisition
+  - slot: style_2
+    source: civitai
+    status: pending_acquisition
+  - slot: character_1
+    source: civitai
+    status: pending_acquisition
+  - slot: concept_1
+    source: civitai
+    status: pending_acquisition
+fallback:
+  # Documented fallback if fewer than four usable SD3 checkpoints exist
+  # (README §2, CAP-28): fall back to configs/fallback/*.yaml retrains.
+  min_usable: 4
+  on_shortfall: use_fallback_configs

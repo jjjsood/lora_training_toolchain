@@ -1,0 +1,13 @@
+# X-R128 — fallback: non-canonical high rank, exempt from matched budget.
+# Used only if a canonical-rank retrain is needed after an E_img gate
+# rejection and a larger rank is the chosen remedy.
+adapter_id: X-R128
+extends: ../base.yaml
+overrides_allowed: [target]
+budget_exempt: true
+target:
+  scope: transformer
+  blocks: [0, 23]
+  module_classes: [attn, mlp]
+  rank: 128
+  alpha: 128

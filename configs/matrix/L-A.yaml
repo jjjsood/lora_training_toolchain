@@ -1,0 +1,10 @@
+# L-A — module-type ground truth: attention only, blocks 0-23, rank 16.
+adapter_id: L-A
+extends: ../base.yaml
+overrides_allowed: [target]
+target:
+  scope: transformer
+  blocks: [0, 23]
+  module_classes: [attn]
+  rank: 16
+  alpha: 16

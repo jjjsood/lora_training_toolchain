@@ -1,0 +1,10 @@
+# L-M — module-type ground truth: MLP only, blocks 0-23, rank 16.
+adapter_id: L-M
+extends: ../base.yaml
+overrides_allowed: [target]
+target:
+  scope: transformer
+  blocks: [0, 23]
+  module_classes: [mlp]
+  rank: 16
+  alpha: 16

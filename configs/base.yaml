@@ -1,0 +1,77 @@
+# Shared training budget for the SD3-Medium placement matrix.
+#
+# Every key a matrix overlay does NOT explicitly override (per its
+# `overrides_allowed`) is inherited verbatim from here. This is the single
+# source of truth for "identical data, steps, LR, batch size and seed"
+# across the placement block (README §3).
+
+model:
+  arch: sd3
+  # SAI single-file layout: kohya-ss/sd-scripts cannot read the -diffusers repo.
+  # Revisions are the real HEAD commits of these repos (verified against the
+  # HF API); tests/test_model_pins.py pins them so they cannot drift back
+  # into plausible-looking but invented hashes.
+  train_repo: stabilityai/stable-diffusion-3-medium
+  train_revision: 19b7f516efea082d257947e057e6f419e26fd497
+  # Single-file checkpoint kohya loads via --pretrained_model_name_or_path.
+  # Relative to the model root (env LORAFACTORY_MODELS_DIR); the emitter
+  # resolves it to an absolute path, because kohya takes a FILE here, not a
+  # repo id.
+  train_file: sd3_medium.safetensors
+  # diffusers-format repo used for conversion round-trip / eval loading.
+  eval_repo: stabilityai/stable-diffusion-3-medium-diffusers
+  eval_revision: ea42f8cef0f178587cf766dc8129abd379c90671
+  # Also relative to the model root — kohya wants each encoder as a file path.
+  text_encoders:
+    clip_l: text_encoders/clip_l.safetensors
+    clip_g: text_encoders/clip_g.safetensors
+    t5xxl: text_encoders/t5xxl_fp16.safetensors
+
+dataset:
+  # Paths are relative to the dataset root (env LORAFACTORY_DATASETS_DIR,
+  # default /workspace/datasets — the container mount point). The emitter
+  # resolves them to absolute paths, so the same config works in the container
+  # and on a host checkout without editing the matched-budget block.
+  name: STYLE
+  path: STYLE
+  manifest: STYLE/manifest.csv
+  resolution: 1024
+
+train:
+  seed: 20260808
+  max_train_steps: 2000
+  learning_rate: 0.0001
+  train_batch_size: 1
+  optimizer_type: AdamW8bit
+  mixed_precision: bf16
+  save_precision: bf16
+  save_model_as: safetensors
+  gradient_checkpointing: true
+  cache_latents: true
+  cache_latents_to_disk: true
+  cache_text_encoder_outputs: true
+  cache_text_encoder_outputs_to_disk: true
+  max_data_loader_n_workers: 0
+  blocks_to_swap: 0
+  logging_dir: logs
+
+# Default/reference placement: the "normal" full adapter (L-F). Overlays
+# replace this section wholesale to move where the adapter sits.
+target:
+  scope: transformer
+  blocks: [0, 23]
+  module_classes: [attn, mlp]
+  rank: 16
+  alpha: 16
+
+determinism:
+  cublas_workspace_config: ":4096:8"
+  pythonhashseed: "0"
+  deterministic_algorithms: true
+
+# No `output` section: where a run is written is a runtime decision (CLI
+# --runs-dir / LORAFACTORY_RUNS_DIR), not a property of the matched budget.
+# It used to hold `base_dir: /workspace/runs`, which the emitter copied into
+# the kohya TOML's output_dir — so on any host checkout kohya would have
+# written the trained adapter into a directory that does not exist, while the
+# CLI put the TOML somewhere else entirely.

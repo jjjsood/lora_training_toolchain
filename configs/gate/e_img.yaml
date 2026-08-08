@@ -1,0 +1,27 @@
+# E_img training-success gate (CAP-26).
+# Image-only effect gate: LoRA-arm E_img (LPIPS + CLIP-embedding distance
+# from a shared base reference set) must beat the base-vs-base null by
+# Cliff's delta > 0.8 on at least 3 of >=3 prompts, with null sanity holding.
+
+scale: 1.0
+n_prompts_min: 3
+n_seeds_min: 10
+delta_threshold: 0.8
+null_sanity_delta_max: 0.2
+metric_rule: both  # pass requires BOTH lpips and clip_distance deltas > threshold
+
+prompts:
+  - "a photo of a mountain landscape at dawn"
+  - "a portrait of a person reading a book"
+  - "a still life of fruit on a wooden table"
+
+seeds: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+
+metrics:
+  lpips:
+    net: alex
+  clip_distance:
+    model: openai/clip-vit-large-patch14
+
+output:
+  csv_columns: [checkpoint, prompt, seed, arm, lpips, clip_distance]

@@ -1,0 +1,15 @@
+# O-F — objective axis, paired against L-F: all adapted linears, OBJ dataset.
+adapter_id: O-F
+extends: ../base.yaml
+overrides_allowed: [target, dataset]
+target:
+  scope: transformer
+  blocks: [0, 23]
+  module_classes: [attn, mlp]
+  rank: 16
+  alpha: 16
+dataset:
+  name: OBJ
+  path: OBJ
+  manifest: OBJ/manifest.csv
+  resolution: 1024
