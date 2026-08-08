@@ -74,7 +74,7 @@ RUN uv venv --python 3.11 /opt/venv-kohya \
 
 # --- /opt/venv-tool: lorafactory itself --------------------------------
 WORKDIR /opt/lorafactory
-COPY LICENSE pyproject.toml uv.lock ./
+COPY LICENSE README.md pyproject.toml uv.lock ./
 COPY src ./src
 RUN uv venv --python 3.11 /opt/venv-tool \
     && UV_PROJECT_ENVIRONMENT=/opt/venv-tool uv sync --frozen --no-dev
