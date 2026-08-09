@@ -845,6 +845,65 @@ def test_cli_introspect_reports_matched_and_unmatched_counts(tmp_path):
     assert payload["base_revision"] == "sha-777"
 
 
+def test_cli_introspect_cache_dir_is_shared_across_different_out_dirs(tmp_path):
+    """Finding 3: the subspace cache must live under a shared `--cache-dir`,
+    independent of `--out`, so an 11-adapter matrix does not recompute the
+    same base-weight SVDs 11 times. Two CLI invocations against two separate
+    `--out` directories, sharing `--cache-dir` and `--base-revision`, must
+    reuse the first run's cached subspace rather than recompute it — checked
+    directly against the cache hit/miss counters `base_cache.py` keeps, and
+    by the cached safetensors file's mtime staying unchanged."""
+    key = "model.diffusion_model.joint_blocks.0.x_block.attn.proj.weight"
+    dim = 12
+    g = torch.Generator().manual_seed(81)
+    base = base_checkpoint_with(
+        tmp_path / "base.safetensors", key, torch.randn(dim, dim, generator=g)
+    )
+    module = "transformer.transformer_blocks.0.attn.to_out.0"
+    sd = {}
+    sd.update(peft_module(module, 4, dim, dim, seed=82))
+    ckpt = write_checkpoint(tmp_path / "adapter.safetensors", sd)
+
+    cache_dir = tmp_path / "shared-cache"
+    revision = "sha-shared"
+
+    result1 = CliRunner().invoke(
+        cli,
+        ["introspect", str(ckpt), "--out", str(tmp_path / "out1"),
+         "--cache-dir", str(cache_dir), "--base", str(base),
+         "--base-revision", revision, "--k", "4"],
+    )
+    assert result1.exit_code == 0, result1.output
+    assert "intruder subspaces: 1 matched, 0 unmatched" in result1.output
+
+    cached_path = (
+        cache_dir / ".cache" / "introspect" / revision / f"{module}.k4.safetensors"
+    )
+    assert cached_path.exists()
+    # Never written under either --out dir: --cache-dir is independent of --out.
+    assert not (tmp_path / "out1" / ".cache").exists()
+    mtime_after_first_run = cached_path.stat().st_mtime_ns
+
+    result2 = CliRunner().invoke(
+        cli,
+        ["introspect", str(ckpt), "--out", str(tmp_path / "out2"),
+         "--cache-dir", str(cache_dir), "--base", str(base),
+         "--base-revision", revision, "--k", "4"],
+    )
+    assert result2.exit_code == 0, result2.output
+    assert "intruder subspaces: 1 matched, 0 unmatched" in result2.output
+    assert not (tmp_path / "out2" / ".cache").exists()
+
+    # The second --out dir reused the first run's cache entry: the file on
+    # disk was never rewritten, i.e. no second SVD was computed.
+    assert cached_path.stat().st_mtime_ns == mtime_after_first_run
+
+    # Direct confirmation via the cache's own hit/miss counters.
+    reader = BaseSubspaceCache(cache_dir, revision, base_checkpoint=base)
+    assert reader.top_k_subspace(module, 4) is not None
+    assert (reader.misses, reader.hits) == (0, 1)
+
+
 def test_cli_introspect_fails_loudly_on_a_non_lora_checkpoint(tmp_path):
     path = write_checkpoint(tmp_path / "plain.safetensors", {"w": torch.zeros(2, 2)})
     result = CliRunner().invoke(cli, ["introspect", str(path), "--out", str(tmp_path / "o")])

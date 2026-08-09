@@ -62,6 +62,11 @@ SD_SCRIPTS_REF = "v0.11.1"
 RUNS_DIR_ENV = "LORAFACTORY_RUNS_DIR"
 DEFAULT_RUNS_DIRNAME = "runs"
 
+#: `introspect --cache-dir` default override, same pattern as RUNS_DIR_ENV: an
+#: explicit env var beats the repo-relative default, and tests redirect it so
+#: the suite never writes real cache files into a tracked repo directory.
+INTROSPECT_CACHE_DIR_ENV = "LORAFACTORY_INTROSPECT_CACHE_DIR"
+
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _GATE_CONFIG_RELPATH = Path("configs") / "gate" / "e_img.yaml"
 
@@ -70,6 +75,20 @@ def _default_gate_config() -> Path:
     """The repo's E_img gate config, whether run from a checkout or installed."""
     packaged = _REPO_ROOT / _GATE_CONFIG_RELPATH
     return packaged if packaged.exists() else Path(_GATE_CONFIG_RELPATH)
+
+
+def _default_introspect_cache_root() -> Path:
+    """Repo-level root for `introspect`'s shared base-subspace cache.
+
+    `BaseSubspaceCache` writes under `<root>/.cache/introspect/<revision>/`
+    (base_cache.py), so this is the *root* passed in, not that full path.
+    Defaults to the repo checkout so an introspect matrix over many adapters
+    shares one set of base-weight SVDs regardless of each adapter's `--out`;
+    ``$LORAFACTORY_INTROSPECT_CACHE_DIR`` overrides it (tests redirect it here
+    so the suite never writes cache files into the tracked repo).
+    """
+    override = os.environ.get(INTROSPECT_CACHE_DIR_ENV)
+    return Path(override) if override else _REPO_ROOT
 
 
 def _resolve_config(config_path: Path) -> ResolvedConfig:
@@ -402,6 +421,12 @@ INTROSPECT_CONFIG = "introspect.config.json"
               help="Base checkpoint for the intruder statistic (SD3; omit to leave it empty).")
 @click.option("--base-revision", default="", help="Revision the --base weights are pinned to; "
               "keys the subspace cache, so a different base never reuses entries.")
+@click.option("--cache-dir", "cache_dir", default=None,
+              type=click.Path(path_type=Path),
+              help="Root for the shared base-subspace cache, independent of --out so an "
+              "introspect matrix reuses one adapter's SVDs across every other adapter's "
+              f"--out directory (default: <repo>/.cache/introspect; override via "
+              f"${INTROSPECT_CACHE_DIR_ENV}).")
 @click.option("--k", type=int, default=10, show_default=True,
               help="How many singular values/base directions to report per module.")
 @click.option("--tau", type=float, default=0.5, show_default=True,
@@ -409,7 +434,8 @@ INTROSPECT_CONFIG = "introspect.config.json"
 @click.option("--adapter-id", default=None,
               help="Value of the CSV's `adapter` column (default: the checkpoint's stem).")
 def introspect(checkpoint: Path, out_dir: Path, base_checkpoint: Path | None,  # noqa: PLR0913, PLR0917 - a click command's parameter list *is* its CLI surface
-               base_revision: str, k: int, tau: float, adapter_id: str | None):
+               base_revision: str, cache_dir: Path | None, k: int, tau: float,
+               adapter_id: str | None):
     """Per-module spectra of one adapter: norms, effective rank, top sigmas, intruders.
 
     CPU-only and offline — the checkpoint is streamed tensor by tensor and
@@ -428,8 +454,9 @@ def introspect(checkpoint: Path, out_dir: Path, base_checkpoint: Path | None,  #
 
     base_cache = None
     if base_checkpoint is not None or base_revision:
+        cache_root = cache_dir if cache_dir is not None else _default_introspect_cache_root()
         base_cache = BaseSubspaceCache(
-            out_dir, base_revision, base_checkpoint=base_checkpoint
+            cache_root, base_revision, base_checkpoint=base_checkpoint
         )
 
     try:

@@ -32,6 +32,18 @@ def _isolated_runs_dir(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("LORAFACTORY_RUNS_DIR", str(tmp_path / "runs"))
 
 
+@pytest.fixture(autouse=True)
+def _isolated_introspect_cache_dir(monkeypatch, tmp_path) -> None:
+    """Redirect every test's default introspect base-subspace cache root.
+
+    Mirrors `_isolated_runs_dir`: `introspect --cache-dir` defaults to the
+    repo-level `.cache/introspect` when unset, so any CLI test that doesn't
+    pass `--cache-dir` explicitly would otherwise write real cache files into
+    the tracked repo instead of into an ephemeral test directory.
+    """
+    monkeypatch.setenv("LORAFACTORY_INTROSPECT_CACHE_DIR", str(tmp_path / "introspect-cache"))
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _guard_runs_dir_stays_clean():
     """Fail the suite if any test leaks output into the repo's `runs/` dir.
@@ -47,6 +59,21 @@ def _guard_runs_dir_stays_clean():
     leaked = after - before
     assert not leaked, (
         f"test run leaked into repo runs/ dir: {sorted(p.name for p in leaked)}"
+    )
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _guard_introspect_cache_stays_clean():
+    """Fail the suite if any test leaks a subspace cache into the repo's
+    `.cache/introspect/` dir — the default `introspect --cache-dir` resolves
+    to, which `_isolated_introspect_cache_dir` exists specifically to avoid."""
+    cache_dir = ROOT / ".cache" / "introspect"
+    before = set(cache_dir.iterdir()) if cache_dir.exists() else set()
+    yield
+    after = set(cache_dir.iterdir()) if cache_dir.exists() else set()
+    leaked = after - before
+    assert not leaked, (
+        f"test run leaked into repo .cache/introspect dir: {sorted(p.name for p in leaked)}"
     )
 
 
