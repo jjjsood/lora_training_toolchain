@@ -8,6 +8,16 @@ converted state dict's *modules* (one entry per `lora_A`/`lora_B` pair)
 against that set. `arch="flux"` switches the transformer scope to the FLUX
 double-/single-stream vocabulary (`target.blocks_double`/`blocks_single`);
 `arch="sd3"` (the default) is byte-identical to the pre-FLUX behavior.
+
+FLUX kohya bridge. This repo's `convert` command stays SD3-only (T4: WAIVER
+— diffusers 0.39 already converts kohya-layout FLUX LoRAs natively, see
+tests/test_flux_load_smoke.py), so `train`/`train-matrix` never write a
+diffusers-layout FLUX checkpoint to disk: the only FLUX artifact they produce
+is kohya-layout. `verify(sd, target, arch="flux")` therefore detects a
+kohya-layout input (same suffix check `lorafactory.survey.introspect` uses)
+and runs it through diffusers' own `FluxLoraLoaderMixin.lora_state_dict`
+before comparing — the state dict `verify` reasons about internally is always
+diffusers-layout, but the CLI/caller may hand it either layout for FLUX.
 """
 
 from __future__ import annotations
@@ -35,6 +45,7 @@ from lorafactory.convert.keymap import (
     parse_diffusers_lora_key,
     parse_flux_diffusers_lora_key,
 )
+from lorafactory.survey.introspect import KOHYA_DOWN
 
 _TE_ENCODER_INFO = {
     "clip_l": ("text_encoder", CLIP_L_NUM_LAYERS),
@@ -129,8 +140,37 @@ def _full_module_name(parsed: DiffusersKey | FluxDiffusersKey) -> str:
     return f"{prefix}.{parsed.module}"
 
 
+def _is_kohya_layout(sd: dict) -> bool:
+    """True if any key uses the kohya `lora_down`/`lora_up`/`alpha` suffix set.
+
+    Mirrors the suffix check `lorafactory.survey.introspect.introspect` uses
+    to tell kohya and diffusers/PEFT layouts apart, without pulling in that
+    module's mixed-layout/empty-checkpoint validation (verify's own
+    unparseable-key handling already covers those cases downstream).
+    """
+    return any(key.endswith(KOHYA_DOWN) for key in sd)
+
+
+def _bridge_kohya_flux_to_diffusers(sd: dict) -> dict:
+    """Convert a kohya-layout FLUX LoRA state dict to diffusers/PEFT layout.
+
+    Delegates to diffusers' own native FLUX conversion (T4's WAIVER decision:
+    `FluxLoraLoaderMixin.lora_state_dict` already consumes kohya-trained FLUX
+    LoRAs end to end — verified against a real tiny FluxTransformer2DModel in
+    tests/test_flux_load_smoke.py). Imported lazily so a plain SD3 `verify()`
+    call, or a FLUX call already given a diffusers-layout dict, never pays for
+    importing diffusers.
+    """
+    from diffusers.loaders.lora_pipeline import FluxLoraLoaderMixin  # noqa: PLC0415
+
+    return FluxLoraLoaderMixin.lora_state_dict(dict(sd))
+
+
 def verify(sd: dict, target: dict, arch: str = "sd3") -> VerifyReport:
     """Compare a converted state dict's module inventory against `target`."""
+    if arch == "flux" and _is_kohya_layout(sd):
+        sd = _bridge_kohya_flux_to_diffusers(sd)
+
     expected = expected_module_names(target, arch=arch)
     expected_rank = target["rank"]
     use_flux_transformer_parser = arch == "flux" and target["scope"] == "transformer"

@@ -217,6 +217,71 @@ def test_flux_clean_synthetic_checkpoint_verifies():
     assert r.ok and not r.unexpected and not r.missing and not r.rank_mismatches
 
 
+# ---- FLUX kohya bridge (the WS3/WS4 seam) ----
+
+
+def test_flux_kohya_checkpoint_bridges_through_native_diffusers_conversion():
+    """`train`/`train-matrix` never write anything but a kohya-layout FLUX
+    checkpoint (T4: WAIVER — `convert` stays SD3-only, diffusers 0.39 already
+    consumes kohya FLUX LoRAs natively). Every other FLUX fixture in this
+    file builds a diffusers-layout dict by hand; this one builds the real
+    kohya key grammar and checks `verify` bridges it before comparing."""
+    from conftest import kohya_module
+
+    target = tf(blocks_double=(0, 1), blocks_single=(0, 1))
+    hidden = 8  # dimension-agnostic leaves: any width converts correctly
+    real_dim = 3072  # single-stream linear1: diffusers hardcodes this split
+    real_mlp = 4 * real_dim
+    rank = target["rank"]
+
+    double_leaves = [
+        ("img_attn_qkv", 3 * hidden, hidden),
+        ("img_attn_proj", hidden, hidden),
+        ("txt_attn_qkv", 3 * hidden, hidden),
+        ("txt_attn_proj", hidden, hidden),
+        ("img_mlp_0", 4 * hidden, hidden),
+        ("img_mlp_2", hidden, 4 * hidden),
+        ("txt_mlp_0", 4 * hidden, hidden),
+        ("txt_mlp_2", hidden, 4 * hidden),
+    ]
+
+    sd = {}
+    seed = 0
+    for i in range(2):
+        prefix = f"lora_unet_double_blocks_{i}"
+        for leaf, out_dim, in_dim in double_leaves:
+            sd.update(kohya_module(
+                f"{prefix}_{leaf}", rank, out_dim, in_dim, float(rank), seed=seed
+            ))
+            seed += 1
+    for i in range(2):
+        prefix = f"lora_unet_single_blocks_{i}"
+        sd.update(kohya_module(
+            f"{prefix}_linear1", rank, 3 * real_dim + real_mlp, real_dim, float(rank), seed=seed
+        ))
+        seed += 1
+        sd.update(kohya_module(
+            f"{prefix}_linear2", rank, hidden, 5 * hidden, float(rank), seed=seed
+        ))
+        seed += 1
+
+    r = verify(sd, target, arch="flux")
+    assert r.ok and not r.unexpected and not r.missing and not r.rank_mismatches
+
+
+def test_sd3_kohya_layout_input_is_not_bridged():
+    """Finding 1's bridge is FLUX-only. An SD3 kohya-layout checkpoint must
+    still fail `verify` (SD3 already requires an explicit `convert` step
+    first) — the bridge must not silently reach across architectures."""
+    from conftest import kohya_module
+
+    target = t([0, 1], ["attn", "mlp"])
+    sd = {}
+    sd.update(kohya_module("lora_unet_joint_blocks_0_x_block_attn_proj", 16, 8, 8, 16.0))
+    r = verify(sd, target)  # arch defaults to "sd3"
+    assert not r.ok
+
+
 def test_flux_mutations_report_exactly_three_findings():
     # blocks_single stops at 36 (not 37) so single-block 37 is valid FLUX
     # grammar yet outside this target's requested range — the "extra" case.

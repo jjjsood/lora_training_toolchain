@@ -230,6 +230,64 @@ def test_verify_keys_flux_partial_checkpoint_reports_missing(tmp_path):
     assert "missing" in result.output.lower()
 
 
+def test_verify_keys_passes_a_genuine_kohya_layout_flux_checkpoint(tmp_path):
+    """The WS3/WS4 seam. `train`/`train-matrix` write kohya-layout FLUX
+    checkpoints and nothing else (T4: WAIVER — `convert` stays SD3-only), so
+    this is the only FLUX artifact `verify-keys` is ever actually pointed at
+    outside a test. Every FLUX fixture above builds a diffusers-layout dict
+    directly (no producer); this one builds the real kohya key grammar an
+    F-F run would write, at the full pinned block count, and checks the
+    bridge in `key_inventory.verify` converts it and passes clean."""
+    from conftest import kohya_module
+    from lorafactory.config.loader import resolve
+    from lorafactory.constants import FLUX_NUM_DOUBLE_BLOCKS, FLUX_NUM_SINGLE_BLOCKS
+
+    target = resolve(MATRIX / "F-F.yaml").data["target"]
+    rank = target["rank"]
+
+    hidden = 32  # dimension-agnostic leaves: any width converts correctly
+    real_dim = 3072  # single-stream linear1: diffusers hardcodes this split width
+    real_mlp = 4 * real_dim
+
+    double_leaves = [
+        ("img_attn_qkv", 3 * hidden, hidden),
+        ("img_attn_proj", hidden, hidden),
+        ("txt_attn_qkv", 3 * hidden, hidden),
+        ("txt_attn_proj", hidden, hidden),
+        ("img_mlp_0", 4 * hidden, hidden),
+        ("img_mlp_2", hidden, 4 * hidden),
+        ("txt_mlp_0", 4 * hidden, hidden),
+        ("txt_mlp_2", hidden, 4 * hidden),
+    ]
+
+    sd = {}
+    seed = 0
+    for i in range(FLUX_NUM_DOUBLE_BLOCKS):
+        prefix = f"lora_unet_double_blocks_{i}"
+        for leaf, out_dim, in_dim in double_leaves:
+            sd.update(kohya_module(
+                f"{prefix}_{leaf}", rank, out_dim, in_dim, float(rank), seed=seed
+            ))
+            seed += 1
+    for i in range(FLUX_NUM_SINGLE_BLOCKS):
+        prefix = f"lora_unet_single_blocks_{i}"
+        sd.update(kohya_module(
+            f"{prefix}_linear1", rank, 3 * real_dim + real_mlp, real_dim, float(rank), seed=seed
+        ))
+        seed += 1
+        sd.update(kohya_module(
+            f"{prefix}_linear2", rank, hidden, 5 * hidden, float(rank), seed=seed
+        ))
+        seed += 1
+
+    ckpt = tmp_path / "kohya_full.safetensors"
+    save_file(sd, str(ckpt))
+
+    result = run("verify-keys", "--checkpoint", str(ckpt), "--config", str(MATRIX / "F-F.yaml"))
+    assert result.exit_code == 0, result.output
+    assert "key inventory OK" in result.output
+
+
 def test_gate_computes_a_verdict_from_a_results_csv(tmp_path):
     csv_path = make_gate_csv(tmp_path / "results.csv")
     out = tmp_path / "gate.json"
