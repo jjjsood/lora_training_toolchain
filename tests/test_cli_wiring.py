@@ -23,7 +23,7 @@ import torch
 from click.testing import CliRunner
 from safetensors.torch import save_file
 
-from conftest import MATRIX, peft_module
+from conftest import CONFIGS, MATRIX, peft_module
 from lorafactory.cli import cli
 
 GATE_CSV_COLUMNS = ["checkpoint", "prompt", "seed", "arm", "lpips", "clip_distance"]
@@ -468,3 +468,55 @@ def test_gen_gate_images_dry_run_plans_the_full_grid(tmp_path, monkeypatch):
     assert len(plan["images"]) == len(PROMPTS) * len(SEEDS) * 2, len(plan["images"])
     assert {img["arm"] for img in plan["images"]} == {"lora", "null"}
     assert not any((tmp_path / "imgs").glob("*.png")), "dry run wrote images"
+    # SD3's default family, with no render kwargs restricted.
+    assert plan["family"] == "sd3"
+    assert plan["render_kwargs"] == {}
+
+
+def test_gen_gate_images_dry_run_fails_on_an_invalid_render_config(tmp_path, monkeypatch):
+    """Finding 4: WS5's render-config validation must actually fire from the
+    CLI, not just from tests that call `build_render_kwargs`/`render_settings`
+    directly. A `negative_prompt` under a `flux_schnell` family config is
+    exactly the kind of SD3-only key that would silently reach a real
+    pipeline call if `--dry-run` never validated the render section."""
+    fake_model_root(tmp_path, monkeypatch)
+    ckpt = tmp_path / "adapter.safetensors"
+    write_peft_checkpoint(ckpt, ["transformer.transformer_blocks.0.attn.to_q"])
+
+    bad_config = tmp_path / "bad_flux_gate.yaml"
+    bad_config.write_text(
+        "family: flux_schnell\n"
+        "prompts: [a]\n"
+        "seeds: [0]\n"
+        "render:\n"
+        "  negative_prompt: bad\n"
+    )
+
+    result = run("gen-gate-images", "--checkpoint", str(ckpt),
+                 "--out", str(tmp_path / "imgs"), "--gate-config", str(bad_config),
+                 "--dry-run")
+    assert result.exit_code != 0
+    assert "negative_prompt" in result.output
+
+
+def test_gen_gate_images_flux_dry_run_reports_the_resolved_render_kwargs(tmp_path, monkeypatch):
+    """A valid FLUX dry-run's JSON must visibly carry the family and the
+    resolved render kwargs (guidance_scale 0.0, 4 steps, euler), not just
+    the image grid — that is what makes WS5's validation checkable from a
+    `--dry-run` invocation instead of only from a unit test."""
+    fake_model_root(tmp_path, monkeypatch)
+    ckpt = tmp_path / "adapter.safetensors"
+    write_peft_checkpoint(ckpt, ["transformer.transformer_blocks.0.attn.to_q"])
+
+    result = run("gen-gate-images", "--checkpoint", str(ckpt),
+                 "--out", str(tmp_path / "imgs"), "--gate-config",
+                 str(CONFIGS / "gate" / "e_img_flux.yaml"), "--dry-run")
+    assert result.exit_code == 0, result.output
+
+    plan = json.loads(result.output)
+    assert plan["family"] == "flux_schnell"
+    assert plan["render_kwargs"] == {
+        "guidance_scale": 0.0,
+        "num_inference_steps": 4,
+        "scheduler": "euler",
+    }

@@ -42,9 +42,9 @@ from lorafactory.data.fetch import DatasetSourceError, fetch_dataset, fetch_plan
 from lorafactory.data.manifest import MANIFEST_FILENAME, sha256_file
 from lorafactory.data.manifest import check_dataset as check_dataset_manifest
 from lorafactory.determinism import REQUIRED_ENV, adapters_identical, build_env
-from lorafactory.gate.generate import plan_images
+from lorafactory.gate.generate import GateRenderError, plan_images
 from lorafactory.gate.report import GateResult
-from lorafactory.gate.run import evaluate_csv, load_gate_config
+from lorafactory.gate.run import evaluate_csv, load_gate_config, render_settings
 from lorafactory.introspect.base_cache import BaseSubspaceCache
 from lorafactory.introspect.report import introspect_checkpoint, write_config_json, write_csv
 from lorafactory.kohya.runner import RunnerConfigError, build_train_command, run_train
@@ -349,9 +349,20 @@ def gen_gate_images(checkpoint: Path, out_dir: Path, gate_config_path: Path | No
                     dry_run: bool):
     """Generate the E_img gate's LoRA-arm/null image pairs (GPU; --dry-run is CPU-only)."""
     cfg = load_gate_config(gate_config_path or _default_gate_config())
+    try:
+        family, render_kwargs = render_settings(cfg)
+    except GateRenderError as exc:
+        raise click.ClickException(f"gate config render section: {exc}") from exc
+
     plan = plan_images(cfg, checkpoint=Path(checkpoint).stem, out_dir=out_dir)
     if dry_run:
-        _echo_json({"checkpoint": str(checkpoint), "out": str(out_dir), "images": plan})
+        _echo_json({
+            "checkpoint": str(checkpoint),
+            "out": str(out_dir),
+            "family": family,
+            "render_kwargs": render_kwargs,
+            "images": plan,
+        })
         return
     raise click.ClickException(
         "gen-gate-images needs a GPU pipeline; run with --dry-run to inspect the "
