@@ -241,6 +241,8 @@ A deliberate retrain gets a fresh attempt directory; the predecessor is left unt
 
 The adapter comes out in **kohya key layout**; `convert` turns it into the diffusers/PEFT layout, which is what `verify-keys` and any consumer read.
 
+**This only applies to SD3.** FLUX needs no `convert` step: the pinned `diffusers==0.39.0` already ships kohya→diffusers conversion for FLUX (`_convert_kohya_flux_lora_to_diffusers`, wired into `FluxLoraLoaderMixin.lora_state_dict`), so a kohya-layout FLUX adapter loads natively via `load_lora_weights`. `tests/test_flux_load_smoke.py` verifies this against a real (tiny) `FluxTransformer2DModel`, running diffusers' actual conversion code — not a mock — across the full kohya FLUX vocabulary (double-stream qkv/proj/mlp/mod, single-stream `linear2`/`modulation_lin` at any width, plus single-stream `linear1` checked separately at real FLUX.1 dimensions, since that one split is hardcoded in diffusers to `3072`/`12288` rather than derived from the tensors it converts — invisible in practice, since a real kohya-trained FLUX LoRA is always shaped for real FLUX.1). `lorafactory convert` remains SD3-only; there is no FLUX converter in this repo.
+
 ---
 
 ## The E_img gate

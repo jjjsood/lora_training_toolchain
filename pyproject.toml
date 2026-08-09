@@ -42,6 +42,8 @@ packages = ["src/lorafactory"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = ["gpu: requires CUDA GPU + local model weights; excluded by default"]
+addopts = "-m 'not gpu'"
 
 [tool.ruff]
 line-length = 100
