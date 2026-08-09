@@ -7,6 +7,8 @@ from a live model.
 
 SD3_NUM_BLOCKS = 24
 SD3_CONTEXT_PRE_ONLY_BLOCK = 23
+#: Highest transformer block index of SD3-Medium (24 blocks, 0-23).
+SD3_MAX_BLOCK_INDEX = SD3_NUM_BLOCKS - 1
 
 SD3_ATTN_LEAVES = (
     "attn.to_q", "attn.to_k", "attn.to_v", "attn.to_out.0",
@@ -38,6 +40,10 @@ CLIP_MLP_LEAVES = ("mlp.fc1", "mlp.fc2")
 
 FLUX_NUM_DOUBLE_BLOCKS = 19
 FLUX_NUM_SINGLE_BLOCKS = 38
+#: Highest double-stream block index of FLUX (19 blocks, 0-18).
+FLUX_MAX_DOUBLE_BLOCK_INDEX = FLUX_NUM_DOUBLE_BLOCKS - 1
+#: Highest single-stream block index of FLUX (38 blocks, 0-37).
+FLUX_MAX_SINGLE_BLOCK_INDEX = FLUX_NUM_SINGLE_BLOCKS - 1
 
 FLUX_DOUBLE_ATTN_LEAVES = SD3_ATTN_LEAVES
 FLUX_DOUBLE_MLP_LEAVES = SD3_MLP_LEAVES
