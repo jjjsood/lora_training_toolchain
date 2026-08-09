@@ -2,7 +2,7 @@
 
 Subcommands: resolve-config, check-budget, check-dataset,
 emit-kohya, train, train-matrix, convert, verify-keys, gen-gate-images, gate, synth,
-screen, fetch-models, determinism-check, provenance. Plus two that exist only to
+introspect, screen, fetch-models, determinism-check, provenance. Plus two that exist only to
 make a first real run reproducible from a checkout: `fetch-dataset` (materialise a
 config's declared `dataset.source`) and `test-run` (fetch weights + dataset, then
 train — what the container's test service invokes).
@@ -45,6 +45,8 @@ from lorafactory.determinism import REQUIRED_ENV, adapters_identical, build_env
 from lorafactory.gate.generate import plan_images
 from lorafactory.gate.report import GateResult
 from lorafactory.gate.run import evaluate_csv, load_gate_config
+from lorafactory.introspect.base_cache import BaseSubspaceCache
+from lorafactory.introspect.report import introspect_checkpoint, write_config_json, write_csv
 from lorafactory.kohya.runner import RunnerConfigError, build_train_command, run_train
 from lorafactory.kohya.toml_emitter import emit, engine_for
 from lorafactory.models import ModelPathError, download_plan, resolve_dataset_paths
@@ -384,6 +386,59 @@ def synth(reference: Path, out_path: Path, seed: int, tolerance: float):
 
     click.echo(f"{len(recipe['modules'])} modules -> {out_path}")
     click.echo(str(recipe_path))
+
+
+#: Filenames `introspect` writes into its --out directory.
+INTROSPECT_CSV = "introspect.csv"
+INTROSPECT_CONFIG = "introspect.config.json"
+
+
+@cli.command("introspect")
+@click.argument("checkpoint", type=click.Path(exists=True, path_type=Path))
+@click.option("--out", "out_dir", required=True, type=click.Path(path_type=Path),
+              help="Directory for introspect.csv + introspect.config.json.")
+@click.option("--base", "base_checkpoint", default=None,
+              type=click.Path(exists=True, path_type=Path),
+              help="Base checkpoint for the intruder statistic (SD3; omit to leave it empty).")
+@click.option("--base-revision", default="", help="Revision the --base weights are pinned to; "
+              "keys the subspace cache, so a different base never reuses entries.")
+@click.option("--k", type=int, default=10, show_default=True,
+              help="How many singular values/base directions to report per module.")
+@click.option("--tau", type=float, default=0.5, show_default=True,
+              help="Overlap below which an adapter direction counts as an intruder.")
+@click.option("--adapter-id", default=None,
+              help="Value of the CSV's `adapter` column (default: the checkpoint's stem).")
+def introspect(checkpoint: Path, out_dir: Path, base_checkpoint: Path | None,  # noqa: PLR0913, PLR0917 - a click command's parameter list *is* its CLI surface
+               base_revision: str, k: int, tau: float, adapter_id: str | None):
+    """Per-module spectra of one adapter: norms, effective rank, top sigmas, intruders.
+
+    CPU-only and offline — the checkpoint is streamed tensor by tensor and
+    ΔW is never materialised. One explicit checkpoint path, no enumeration.
+    """
+    if k < 1:
+        raise click.ClickException("--k must be at least 1")
+
+    base_cache = None
+    if base_checkpoint is not None or base_revision:
+        base_cache = BaseSubspaceCache(
+            out_dir, base_revision or "unpinned", base_checkpoint=base_checkpoint
+        )
+
+    try:
+        report = introspect_checkpoint(checkpoint, base_cache=base_cache, k=k, tau=tau)
+    except ValueError as exc:
+        raise click.ClickException(f"{checkpoint}: {exc}") from exc
+
+    out_dir = Path(out_dir)
+    csv_path = out_dir / INTROSPECT_CSV
+    config_path = out_dir / INTROSPECT_CONFIG
+    write_csv(report, csv_path, adapter_id or Path(checkpoint).stem)
+    write_config_json(report, config_path)
+
+    click.echo(f"{len(report.rows)} modules ({report.layout} layout) -> {csv_path}")
+    if base_cache is not None and not report.has_intruder_stats:
+        click.echo("no base subspace matched: intruder columns are empty", err=True)
+    click.echo(str(config_path))
 
 
 @cli.command("screen")

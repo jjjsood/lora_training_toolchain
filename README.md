@@ -44,7 +44,7 @@ git clone <repo-url> lora_training_toolchain
 cd lora_training_toolchain
 
 uv sync
-uv run pytest -q                     # 211 tests, ~4 s, offline
+uv run pytest -q                     # 279 tests, ~4 s, offline
 
 uv run lorafactory resolve-config configs/matrix/L-E.yaml
 uv run lorafactory check-budget --configs configs/matrix
@@ -100,6 +100,7 @@ Installed as `lorafactory`. Every command exits non-zero on a failed report.
 | `gen-gate-images` | Render the gate's LoRA-arm / null image grid. |
 | `gate` | Score the gate CSV: Cliff's δ on LPIPS + CLIP distance, pass/fail. |
 | `synth` | Synthesise a norm-matched random-control adapter from a reference checkpoint. |
+| `introspect` | Per-module spectra of one adapter: Frobenius norm, effective rank, top singular values, intruder dimensions. |
 | `screen` | Screen a community checkpoint (introspection + gate). |
 | `fetch-models` | Pull the pinned base and text-encoder weights. |
 | `fetch-dataset` | Materialise a config's declared `dataset.source`. |
@@ -378,11 +379,12 @@ src/lorafactory/
   verify/          checkpoint key-inventory diff
   gate/            image plan, generation, LPIPS/CLIP metrics, Cliff's δ, report
   synth/           norm-matched random adapter synthesiser
+  introspect/      per-module spectra: norms, effective rank, intruder dimensions
   survey/          community checkpoint introspection + screening
   data/            dataset manifest validation and fetch
 configs/           base + matrix + fallback + gate + synth + survey + test
 docker/            kohya lockfile, entrypoint
-tests/             27 modules, CPU-only, offline
+tests/             28 modules, CPU-only, offline
 tools/             dump_kohya_args.py — one-shot sd-scripts argparse dump
 ```
 
@@ -390,7 +392,7 @@ tools/             dump_kohya_args.py — one-shot sd-scripts argparse dump
 
 ```bash
 uv sync
-uv run pytest -q        # 211 tests, CPU-only, no network, no weights
+uv run pytest -q        # 279 tests, CPU-only, no network, no weights
 uv run ruff check .
 uv run ruff format --check .
 ```
@@ -401,7 +403,8 @@ The suite never builds the image and never downloads weights. Ruff runs `E, F, I
 
 | Area | State |
 |---|---|
-| CPU pipeline — configs, budget check, kohya emission, conversion, key verification, gate stats, synth, provenance | implemented, 211 tests passing |
+| CPU pipeline — configs, budget check, kohya emission, conversion, key verification, gate stats, synth, introspection, provenance | implemented, 279 tests passing |
+| Intruder-dimension statistic | SD3 only — the base-key mapping is pinned for SD3's single-file layout; FLUX's fused `double_blocks.N.img_attn.qkv` needs its own slice convention. Norms, effective rank and top singular values work on any checkpoint. |
 | FLUX path | partial — `networks.lora_flux` args emitted; block bounds and `verify-keys` are SD3-only |
 | Docker image | defined, built by hand, not exercised by CI |
 | STYLE / OBJ datasets | **do not exist — blocking item** |

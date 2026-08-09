@@ -8,7 +8,7 @@ from lorafactory.cli import cli
 EXPECTED_COMMANDS = {
     "resolve-config", "check-budget", "check-dataset", "emit-kohya",
     "train", "train-matrix", "convert", "verify-keys",
-    "gen-gate-images", "gate", "synth", "screen",
+    "gen-gate-images", "gate", "synth", "introspect", "screen",
     "fetch-models", "determinism-check", "provenance",
 }
 
