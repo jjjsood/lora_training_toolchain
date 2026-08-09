@@ -21,6 +21,8 @@ model:
 target:
   scope: transformer
   module_classes: [attn, mlp]
+  blocks_double: [0, 18]
+  blocks_single: [0, 37]
   rank: 16
   alpha: 16
 train:
