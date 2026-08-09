@@ -8,6 +8,7 @@ behind an explicit call, and only the GPU path makes that call.
 """
 
 import json
+import re
 import subprocess
 import sys
 
@@ -166,6 +167,11 @@ def test_load_gate_config_flux_reads_the_real_file():
     assert cfg["metric_rule"] == "both"
     assert len(cfg["prompts"]) >= cfg["n_prompts_min"]
     assert len(cfg["seeds"]) >= cfg["n_seeds_min"]
+    # Eval model pin: field names (eval_repo/eval_revision) match the
+    # convention tests/test_model_pins.py scans across every configs/*.yaml,
+    # so this sha is verified there, not just quoted in a comment here.
+    assert cfg["model"]["eval_repo"] == "black-forest-labs/FLUX.1-schnell"
+    assert re.match(r"^[0-9a-f]{40}$", cfg["model"]["eval_revision"])
 
 
 def test_plan_images_flux_covers_every_prompt_seed_arm_cell(tmp_path):

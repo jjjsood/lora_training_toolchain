@@ -26,6 +26,9 @@ VERIFIED_REVISIONS = {
         "ea42f8cef0f178587cf766dc8129abd379c90671"
     ),
     "black-forest-labs/FLUX.1-dev": "3de623fc3c33e44ffbe2bad470d0f45bccf2eb21",
+    # E_img gate eval model (configs/gate/e_img_flux.yaml) — fetched 2026-08-09
+    # via GET https://huggingface.co/api/models/black-forest-labs/FLUX.1-schnell.
+    "black-forest-labs/FLUX.1-schnell": "741f7c3ce8b383c54771c7003378a50191e9efe9",
 }
 
 # kohya-ss/sd-scripts loads a single-file checkpoint; these names exist in the
@@ -62,6 +65,16 @@ def test_flux_model_revisions_are_the_verified_ones():
     assert model["train_repo"] == "black-forest-labs/FLUX.1-dev"
     assert model["train_revision"] == VERIFIED_REVISIONS[model["train_repo"]]
     assert model["eval_revision"] == VERIFIED_REVISIONS[model["eval_repo"]]
+
+
+def test_gate_flux_model_revision_is_the_verified_one():
+    # The E_img gate's flux_schnell config is eval-only (it renders, it does
+    # not train), so it carries eval_repo/eval_revision and no train_* keys.
+    model = load_yaml(CONFIGS / "gate" / "e_img_flux.yaml")["model"]
+    assert model["eval_repo"] == "black-forest-labs/FLUX.1-schnell"
+    assert model["eval_revision"] == VERIFIED_REVISIONS[model["eval_repo"]]
+    assert "train_repo" not in model
+    assert "train_revision" not in model
 
 
 def test_every_revision_in_configs_is_a_known_verified_sha():
