@@ -49,3 +49,10 @@ FLUX_DOUBLE_ATTN_LEAVES = SD3_ATTN_LEAVES
 FLUX_DOUBLE_MLP_LEAVES = SD3_MLP_LEAVES
 FLUX_SINGLE_ATTN_LEAVES = ("attn.to_q", "attn.to_k", "attn.to_v")
 FLUX_SINGLE_MLP_LEAVES = ("proj_mlp", "proj_out")
+
+#: All double-stream leaves, uniform across every block (no SD3-style
+#: context-pre-only quirk — see tests/test_flux_vocabulary.py).
+FLUX_DOUBLE_LEAVES = FLUX_DOUBLE_ATTN_LEAVES + FLUX_DOUBLE_MLP_LEAVES
+#: All single-stream leaves. Single blocks fuse attn-out/mlp into
+#: proj_mlp/proj_out — no attn.to_out.0, no separate ff.* family.
+FLUX_SINGLE_LEAVES = FLUX_SINGLE_ATTN_LEAVES + FLUX_SINGLE_MLP_LEAVES
