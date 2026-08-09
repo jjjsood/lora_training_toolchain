@@ -198,6 +198,38 @@ def test_verify_keys_passes_on_a_complete_checkpoint(tmp_path):
     assert result.exit_code == 0, result.output
 
 
+def test_verify_keys_passes_flux_arch_from_config(tmp_path):
+    """`verify-keys` must dispatch on `model.arch` from the config, not
+    default to SD3, or a complete F-F (FLUX) checkpoint would misreport."""
+    from lorafactory.config.loader import resolve
+    from lorafactory.verify.key_inventory import expected_module_names
+
+    target = resolve(MATRIX / "F-F.yaml").data["target"]
+    names = sorted(expected_module_names(target, arch="flux"))
+    ckpt = tmp_path / "full.safetensors"
+    write_peft_checkpoint(ckpt, names, rank=target["rank"])
+
+    result = run("verify-keys", "--checkpoint", str(ckpt),
+                 "--config", str(MATRIX / "F-F.yaml"))
+    assert result.exit_code == 0, result.output
+    assert "key inventory OK" in result.output
+
+
+def test_verify_keys_flux_partial_checkpoint_reports_missing(tmp_path):
+    from lorafactory.config.loader import resolve
+    from lorafactory.verify.key_inventory import expected_module_names
+
+    target = resolve(MATRIX / "F-F.yaml").data["target"]
+    names = sorted(expected_module_names(target, arch="flux"))[:4]
+    ckpt = tmp_path / "adapter.safetensors"
+    write_peft_checkpoint(ckpt, names)
+
+    result = run("verify-keys", "--checkpoint", str(ckpt),
+                 "--config", str(MATRIX / "F-F.yaml"))
+    assert result.exit_code != 0
+    assert "missing" in result.output.lower()
+
+
 def test_gate_computes_a_verdict_from_a_results_csv(tmp_path):
     csv_path = make_gate_csv(tmp_path / "results.csv")
     out = tmp_path / "gate.json"

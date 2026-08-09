@@ -299,7 +299,8 @@ def verify_keys(checkpoint: Path, config_path: Path):
         raise click.ClickException(f"{config_path} has no `target` section")
 
     sd = load_file(str(checkpoint))
-    report = verify_key_inventory(sd, target)
+    arch = rc.data["model"]["arch"]
+    report = verify_key_inventory(sd, target, arch=arch)
 
     click.echo(f"missing: {len(report.missing)}")
     click.echo(f"unexpected: {len(report.unexpected)}")
