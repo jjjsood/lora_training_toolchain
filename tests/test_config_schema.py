@@ -78,3 +78,94 @@ def test_negative_steps_are_rejected():
     data["train"] = {**data["train"], "max_train_steps": -1}
     with pytest.raises(ConfigSchemaError):
         validate(data)
+
+
+def test_flux_f_f_validates():
+    validate(resolve(MATRIX / "F-F.yaml").data)
+
+
+def test_flux_rejects_blocks():
+    """`blocks` is SD3-only; flux uses blocks_double/blocks_single."""
+    data = dict(resolve(MATRIX / "F-F.yaml").data)
+    data["target"] = {**data["target"], "blocks": [0, 23]}
+    with pytest.raises(ConfigSchemaError):
+        validate(data)
+
+
+def test_sd3_rejects_blocks_double():
+    data = dict(resolve(MATRIX / "L-F.yaml").data)
+    data["target"] = {**data["target"], "blocks_double": [0, 18]}
+    with pytest.raises(ConfigSchemaError):
+        validate(data)
+
+
+def test_sd3_rejects_blocks_single():
+    data = dict(resolve(MATRIX / "L-F.yaml").data)
+    data["target"] = {**data["target"], "blocks_single": [0, 37]}
+    with pytest.raises(ConfigSchemaError):
+        validate(data)
+
+
+def test_flux_transformer_scope_requires_a_block_field():
+    data = dict(resolve(MATRIX / "F-F.yaml").data)
+    data["target"] = {
+        k: v for k, v in data["target"].items()
+        if k not in ("blocks_double", "blocks_single")
+    }
+    with pytest.raises(ConfigSchemaError):
+        validate(data)
+
+
+def test_flux_blocks_double_upper_bound_is_checked():
+    data = dict(resolve(MATRIX / "F-F.yaml").data)
+    data["target"] = {**data["target"], "blocks_double": [0, 19]}
+    with pytest.raises(ConfigSchemaError):
+        validate(data)
+
+
+def test_flux_blocks_double_upper_edge_passes():
+    data = dict(resolve(MATRIX / "F-F.yaml").data)
+    data["target"] = {**data["target"], "blocks_double": [0, 18]}
+    validate(data)
+
+
+def test_flux_blocks_single_upper_bound_is_checked():
+    data = dict(resolve(MATRIX / "F-F.yaml").data)
+    data["target"] = {**data["target"], "blocks_single": [0, 38]}
+    with pytest.raises(ConfigSchemaError):
+        validate(data)
+
+
+def test_flux_blocks_single_upper_edge_passes():
+    data = dict(resolve(MATRIX / "F-F.yaml").data)
+    data["target"] = {**data["target"], "blocks_single": [0, 37]}
+    validate(data)
+
+
+def test_flux_blocks_double_descending_is_rejected():
+    data = dict(resolve(MATRIX / "F-F.yaml").data)
+    data["target"] = {**data["target"], "blocks_double": [18, 0]}
+    with pytest.raises(ConfigSchemaError):
+        validate(data)
+
+
+def test_flux_blocks_single_descending_is_rejected():
+    data = dict(resolve(MATRIX / "F-F.yaml").data)
+    data["target"] = {**data["target"], "blocks_single": [37, 0]}
+    with pytest.raises(ConfigSchemaError):
+        validate(data)
+
+
+def test_sd3_block_upper_edge_still_passes():
+    """23 is the top SD3 edge; the schema must not have tightened it."""
+    data = dict(resolve(MATRIX / "L-F.yaml").data)
+    data["target"] = {**data["target"], "blocks": [0, 23]}
+    validate(data)
+
+
+def test_sd3_block_edge_24_still_fails():
+    """Existing gap kept green: 24 is one past the SD3 top edge."""
+    data = dict(resolve(MATRIX / "L-F.yaml").data)
+    data["target"] = {**data["target"], "blocks": [0, 24]}
+    with pytest.raises(ConfigSchemaError):
+        validate(data)
