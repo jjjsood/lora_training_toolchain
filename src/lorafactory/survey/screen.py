@@ -3,6 +3,7 @@
 API pinned:
     from lorafactory.survey import screen
     screen.screen_plan("configs/survey/sd3_community.yaml")
+    screen.screen_target(entry, info)
 
 One entry per survey slot, each carrying the gate config it will be screened
 against, so no checkpoint can be accepted without passing E_img.
@@ -13,6 +14,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import yaml
+
+from lorafactory.survey.introspect import SurveyInfo
 
 
 class SurveyConfigError(ValueError):
@@ -75,3 +78,28 @@ def screen_plan(survey_config_path) -> list[dict]:
         plan.append(entry)
 
     return plan
+
+
+def screen_target(entry: dict, info: SurveyInfo) -> dict:
+    """Extend a `screen_plan` entry with an introspected checkpoint's report.
+
+    Adds ``detected_arch`` (``info.arch``) and ``arch_mismatch``: True when
+    the slot's declared ``base_arch`` and the checkpoint's own detected
+    architecture are both known and disagree — the survey's config claims
+    one family (e.g. flux) but the downloaded weights key-match another
+    (e.g. sd3). A checkpoint should not be screened through the wrong
+    family's gate on the strength of the config alone, so this flag is
+    meant to be checked before a target is queued for E_img.
+
+    ``base_arch`` or ``info.arch`` being unset/"unknown" is not itself a
+    mismatch (nothing to compare against) — only a genuine disagreement
+    between two known architectures is flagged.
+    """
+    result = dict(entry)
+    base_arch = entry.get("base_arch")
+    detected_arch = info.arch
+    result["detected_arch"] = detected_arch
+    result["arch_mismatch"] = bool(
+        base_arch and detected_arch not in ("unknown", base_arch)
+    )
+    return result

@@ -1,13 +1,13 @@
 # Community FLUX checkpoint survey (CAP-28).
-# Two FLUX checkpoints, each must pass weight introspection and the
-# E_img gate before use.
+# Two FLUX checkpoints — one style LoRA, one subject LoRA — each must pass
+# weight introspection and the FLUX E_img gate before use.
 base_arch: flux
-gate_config: ../gate/e_img.yaml
+gate_config: ../gate/e_img_flux.yaml
 targets:
-  - slot: flux_style_1
+  - slot: CF-1  # style LoRA
     source: civitai
     status: pending_acquisition
-  - slot: flux_style_2
+  - slot: CF-2  # subject LoRA
     source: civitai
     status: pending_acquisition
 fallback:
