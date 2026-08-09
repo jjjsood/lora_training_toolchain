@@ -18,3 +18,7 @@ datasets/*
 
 # misc
 *.log
+
+# agent scratch state (SDD ledgers, briefs, review packages, worktrees)
+.superpowers/
+.claude/worktrees/
