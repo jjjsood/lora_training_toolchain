@@ -9,7 +9,11 @@ API pinned:
 
 CSV columns: checkpoint,prompt,seed,arm,lpips,clip_distance with arm in
 {"lora", "null"}. The statistics live in gate.report/gate.stats; this module
-only reads, coerces and forwards.
+only reads, coerces and forwards — image-space and family-agnostic.
+
+    family, render_kwargs = render_settings(cfg)
+    # family defaults to "sd3"; render_kwargs is validated per family via
+    # gate.generate.build_render_kwargs and feeds gate.generate.render_plan.
 """
 
 from __future__ import annotations
@@ -19,7 +23,7 @@ from pathlib import Path
 
 import yaml
 
-from lorafactory.gate.generate import ARMS
+from lorafactory.gate.generate import ARMS, build_render_kwargs
 from lorafactory.gate.report import GateResult, evaluate
 
 
@@ -30,6 +34,21 @@ def load_gate_config(path: str | Path) -> dict:
     if not isinstance(cfg, dict):
         raise ValueError(f"gate config {path} did not parse to a mapping")
     return cfg
+
+
+def render_settings(cfg: dict) -> tuple[str, dict]:
+    """Read the optional `family`/`render` sections of a gate config.
+
+    `family` defaults to "sd3" (e_img.yaml has no `family` key at all, and
+    that must keep meaning SD3). The `render` section, if present, is
+    validated against that family through
+    :func:`lorafactory.gate.generate.build_render_kwargs` — an incompatible
+    key or value raises `GateRenderError` here, before any rendering is
+    attempted.
+    """
+    family = cfg.get("family", "sd3")
+    render_cfg = cfg.get("render") or {}
+    return family, build_render_kwargs(family, render_cfg)
 
 
 def _rows_to_pairs(csv_path: Path) -> list[dict]:

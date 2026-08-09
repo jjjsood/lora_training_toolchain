@@ -1,0 +1,54 @@
+# E_img training-success gate (CAP-26) — FLUX family.
+# Image-only effect gate: LoRA-arm E_img (LPIPS + CLIP-embedding distance
+# from a shared base reference set) must beat the base-vs-base null by
+# Cliff's delta > 0.8 on at least 3 of >=3 prompts, with null sanity holding.
+# Same structure and thresholds as configs/gate/e_img.yaml (the SD3 gate);
+# only `family`, `render` and `model` differ.
+#
+# Renders on FLUX.1-schnell, NOT the FLUX.1-dev that the F-F adapter trains
+# on. See configs/matrix/F-F.yaml's header comment: that dev->schnell
+# transfer is an assumption, not a verified property, and must be stated
+# wherever F-F gate results are reported.
+
+family: flux_schnell
+
+scale: 1.0
+n_prompts_min: 3
+n_seeds_min: 10
+delta_threshold: 0.8
+null_sanity_delta_max: 0.2
+metric_rule: both  # pass requires BOTH lpips and clip_distance deltas > threshold
+
+prompts:
+  - "a photo of a mountain landscape at dawn"
+  - "a portrait of a person reading a book"
+  - "a still life of fruit on a wooden table"
+
+seeds: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]
+
+# flux_schnell is guidance-distilled: it was trained to run with no
+# classifier-free guidance (guidance_scale 0.0, hence no negative_prompt)
+# and a fixed 4-step schedule. gate/generate.py's build_render_kwargs
+# rejects any other value here, or a negative_prompt/SD3-only key, rather
+# than forwarding it silently.
+render:
+  guidance_scale: 0.0
+  num_inference_steps: 4
+  scheduler: euler
+
+metrics:
+  lpips:
+    net: alex
+  clip_distance:
+    model: openai/clip-vit-large-patch14
+
+# Eval-only model pin (the gate renders images, it does not train).
+# sha fetched live from the HF API on 2026-08-09:
+#   GET https://huggingface.co/api/models/black-forest-labs/FLUX.1-schnell
+#   -> .sha == 741f7c3ce8b383c54771c7003378a50191e9efe9
+model:
+  repo: black-forest-labs/FLUX.1-schnell
+  revision: 741f7c3ce8b383c54771c7003378a50191e9efe9
+
+output:
+  csv_columns: [checkpoint, prompt, seed, arm, lpips, clip_distance]

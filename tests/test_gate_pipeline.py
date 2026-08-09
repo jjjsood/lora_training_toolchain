@@ -17,6 +17,7 @@ from conftest import CONFIGS
 from lorafactory.gate import generate, metrics, run
 
 GATE_CONFIG = CONFIGS / "gate" / "e_img.yaml"
+GATE_CONFIG_FLUX = CONFIGS / "gate" / "e_img_flux.yaml"
 
 
 # --------------------------------------------------------------------------
@@ -150,3 +151,112 @@ def test_plan_is_json_serialisable(tmp_path):
     cfg = run.load_gate_config(GATE_CONFIG)
     plan = generate.plan_images(cfg, checkpoint="L-F", out_dir=tmp_path)
     json.dumps([{**img, "path": str(img["path"])} for img in plan])
+
+
+# --------------------------------------------------------------------------
+# family / render kwargs — flux_schnell alongside the sd3 default
+# --------------------------------------------------------------------------
+
+def test_load_gate_config_flux_reads_the_real_file():
+    cfg = run.load_gate_config(GATE_CONFIG_FLUX)
+    assert cfg["family"] == "flux_schnell"
+    assert cfg["delta_threshold"] == 0.8
+    assert cfg["null_sanity_delta_max"] == 0.2
+    assert cfg["scale"] == 1.0
+    assert cfg["metric_rule"] == "both"
+    assert len(cfg["prompts"]) >= cfg["n_prompts_min"]
+    assert len(cfg["seeds"]) >= cfg["n_seeds_min"]
+
+
+def test_plan_images_flux_covers_every_prompt_seed_arm_cell(tmp_path):
+    # Same planner, same grid-coverage invariant as the SD3 config — family
+    # only changes render kwargs, never the (prompt, seed, arm) grid.
+    cfg = run.load_gate_config(GATE_CONFIG_FLUX)
+    plan = generate.plan_images(cfg, checkpoint="F-F", out_dir=tmp_path)
+
+    assert len(plan) == len(cfg["prompts"]) * len(cfg["seeds"]) * 2
+    assert {img["arm"] for img in plan} == {"lora", "null"}
+    lora = {(i["prompt"], i["seed"]) for i in plan if i["arm"] == "lora"}
+    null = {(i["prompt"], i["seed"]) for i in plan if i["arm"] == "null"}
+    assert lora == null
+
+
+def test_build_render_kwargs_pins_flux_schnell_settings():
+    cfg = run.load_gate_config(GATE_CONFIG_FLUX)
+    kwargs = generate.build_render_kwargs(cfg["family"], cfg["render"])
+    assert kwargs == {
+        "guidance_scale": 0.0,
+        "num_inference_steps": 4,
+        "scheduler": "euler",
+    }
+
+
+def test_build_render_kwargs_flux_schnell_defaults_when_render_cfg_omitted():
+    # The three pinned values apply even if a caller passes no render section.
+    kwargs = generate.build_render_kwargs("flux_schnell", None)
+    assert kwargs["guidance_scale"] == 0.0
+    assert kwargs["num_inference_steps"] == 4
+    assert kwargs["scheduler"] == "euler"
+
+
+def test_build_render_kwargs_rejects_flux_schnell_wrong_guidance_scale():
+    with pytest.raises(generate.GateRenderError):
+        generate.build_render_kwargs("flux_schnell", {"guidance_scale": 3.5})
+
+
+def test_build_render_kwargs_rejects_flux_schnell_wrong_num_inference_steps():
+    with pytest.raises(generate.GateRenderError):
+        generate.build_render_kwargs("flux_schnell", {"num_inference_steps": 28})
+
+
+def test_build_render_kwargs_rejects_flux_schnell_non_euler_scheduler():
+    with pytest.raises(generate.GateRenderError):
+        generate.build_render_kwargs("flux_schnell", {"scheduler": "ddim"})
+
+
+def test_build_render_kwargs_rejects_negative_prompt_for_flux_schnell():
+    with pytest.raises(generate.GateRenderError):
+        generate.build_render_kwargs("flux_schnell", {"negative_prompt": "blurry"})
+
+
+def test_build_render_kwargs_sd3_current_behavior_allows_negative_prompt():
+    kwargs = generate.build_render_kwargs("sd3", {"negative_prompt": "blurry"})
+    assert kwargs == {"negative_prompt": "blurry"}
+
+
+def test_build_render_kwargs_sd3_defaults_to_empty_when_no_render_section():
+    # e_img.yaml has no `render` key at all — the sd3 family must still work.
+    assert generate.build_render_kwargs("sd3", None) == {}
+
+
+def test_build_render_kwargs_rejects_flux_only_keys_for_sd3():
+    with pytest.raises(generate.GateRenderError):
+        generate.build_render_kwargs("sd3", {"max_sequence_length": 256})
+
+
+def test_build_render_kwargs_rejects_unknown_family():
+    with pytest.raises(generate.GateRenderError):
+        generate.build_render_kwargs("nonexistent-family", {})
+
+
+def test_run_render_settings_threads_flux_family_and_render_section():
+    cfg = run.load_gate_config(GATE_CONFIG_FLUX)
+    family, kwargs = run.render_settings(cfg)
+    assert family == "flux_schnell"
+    assert kwargs["num_inference_steps"] == 4
+    assert kwargs["guidance_scale"] == 0.0
+    assert kwargs["scheduler"] == "euler"
+
+
+def test_run_render_settings_defaults_to_sd3_for_the_sd3_config():
+    cfg = run.load_gate_config(GATE_CONFIG)
+    family, kwargs = run.render_settings(cfg)
+    assert family == "sd3"
+    assert kwargs == {}
+
+
+def test_run_render_settings_rejects_incompatible_render_section():
+    cfg = run.load_gate_config(GATE_CONFIG_FLUX)
+    bad_cfg = {**cfg, "render": {**cfg["render"], "negative_prompt": "blurry"}}
+    with pytest.raises(generate.GateRenderError):
+        run.render_settings(bad_cfg)
