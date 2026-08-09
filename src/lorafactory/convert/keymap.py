@@ -16,6 +16,10 @@ from dataclasses import dataclass
 from lorafactory.constants import (
     CLIP_ATTN_LEAVES,
     CLIP_MLP_LEAVES,
+    FLUX_DOUBLE_LEAVES,
+    FLUX_MAX_DOUBLE_BLOCK_INDEX,
+    FLUX_MAX_SINGLE_BLOCK_INDEX,
+    FLUX_SINGLE_LEAVES,
     SD3_ATTN_LEAVES,
     SD3_MLP_LEAVES,
     SD3_NUM_BLOCKS,
@@ -129,3 +133,65 @@ def parse_diffusers_lora_key(key: str) -> DiffusersKey:
         raise UnconvertibleKeyError(f"unparseable diffusers key: {key!r}")
 
     raise UnconvertibleKeyError(f"unparseable diffusers key: {key!r}")
+
+
+@dataclass(frozen=True)
+class FluxDiffusersKey:
+    stream: str  # "double" | "single"
+    block: int
+    module: str
+    part: str  # "lora_A" | "lora_B"
+
+
+_FLUX_DOUBLE_LEAVES = frozenset(FLUX_DOUBLE_LEAVES)
+_FLUX_SINGLE_LEAVES = frozenset(FLUX_SINGLE_LEAVES)
+
+# Double- and single-stream namespaces are distinguished by their literal
+# prefix, not by the block-index grammar: `transformer.transformer_blocks.`
+# vs `transformer.single_transformer_blocks.`. Even though the former is a
+# substring of the latter, `re.fullmatch` anchors the WHOLE key, so the
+# double regex can never partially match into a single-stream key (its
+# literal prefix requires "transformer." to be followed immediately by
+# "transformer_blocks.", never "single_transformer_blocks."). Block indices
+# are `\d+` bounded on both sides by `.` delimiters plus a fullmatch, which
+# is what keeps `blocks_1` from ever matching inside `blocks_11`/`blocks_37`.
+_DIFF_FLUX_DOUBLE_RE = re.compile(
+    r"^transformer\.transformer_blocks\.(?P<block>\d+)\."
+    rf"(?P<module>.+)\.(?P<part>{_DIFF_PART_ALT})\.weight$"
+)
+
+_DIFF_FLUX_SINGLE_RE = re.compile(
+    r"^transformer\.single_transformer_blocks\.(?P<block>\d+)\."
+    rf"(?P<module>.+)\.(?P<part>{_DIFF_PART_ALT})\.weight$"
+)
+
+
+def parse_flux_diffusers_lora_key(key: str) -> FluxDiffusersKey:
+    """Parse a diffusers/PEFT-layout FLUX transformer LoRA key.
+
+    Double-stream (`transformer.transformer_blocks.{N}`, N <= 18) and
+    single-stream (`transformer.single_transformer_blocks.{N}`, N <= 37) each
+    have their own leaf vocabulary — text-encoder FLUX keys are unaffected by
+    this function and still go through `parse_diffusers_lora_key`.
+    """
+    m = _DIFF_FLUX_SINGLE_RE.fullmatch(key)
+    if m:
+        block = int(m.group("block"))
+        module = m.group("module")
+        if block <= FLUX_MAX_SINGLE_BLOCK_INDEX and module in _FLUX_SINGLE_LEAVES:
+            return FluxDiffusersKey(
+                stream="single", block=block, module=module, part=m.group("part"),
+            )
+        raise UnconvertibleKeyError(f"unparseable flux diffusers key: {key!r}")
+
+    m = _DIFF_FLUX_DOUBLE_RE.fullmatch(key)
+    if m:
+        block = int(m.group("block"))
+        module = m.group("module")
+        if block <= FLUX_MAX_DOUBLE_BLOCK_INDEX and module in _FLUX_DOUBLE_LEAVES:
+            return FluxDiffusersKey(
+                stream="double", block=block, module=module, part=m.group("part"),
+            )
+        raise UnconvertibleKeyError(f"unparseable flux diffusers key: {key!r}")
+
+    raise UnconvertibleKeyError(f"unparseable flux diffusers key: {key!r}")

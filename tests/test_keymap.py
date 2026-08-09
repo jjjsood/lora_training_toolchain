@@ -26,6 +26,7 @@ import pytest
 from lorafactory.convert.keymap import (
     UnconvertibleKeyError,
     parse_diffusers_lora_key,
+    parse_flux_diffusers_lora_key,
     parse_kohya_sd3_key,
 )
 
@@ -112,3 +113,87 @@ def test_diffusers_te_keys_parse():
 def test_diffusers_unknown_keys_rejected(bad):
     with pytest.raises(UnconvertibleKeyError):
         parse_diffusers_lora_key(bad)
+
+
+# ---- FLUX diffusers/PEFT grammar ----
+
+def test_flux_double_block_keys_parse():
+    k = parse_flux_diffusers_lora_key(
+        "transformer.transformer_blocks.11.attn.to_q.lora_A.weight")
+    assert (k.stream, k.block, k.module, k.part) == (
+        "double", 11, "attn.to_q", "lora_A")
+    k = parse_flux_diffusers_lora_key(
+        "transformer.transformer_blocks.0.attn.to_out.0.lora_B.weight")
+    assert (k.stream, k.block, k.module, k.part) == (
+        "double", 0, "attn.to_out.0", "lora_B")
+    k = parse_flux_diffusers_lora_key(
+        "transformer.transformer_blocks.18.ff_context.net.0.proj.lora_A.weight")
+    assert (k.stream, k.block, k.module) == ("double", 18, "ff_context.net.0.proj")
+
+
+def test_flux_single_block_keys_parse():
+    k = parse_flux_diffusers_lora_key(
+        "transformer.single_transformer_blocks.0.attn.to_q.lora_A.weight")
+    assert (k.stream, k.block, k.module, k.part) == (
+        "single", 0, "attn.to_q", "lora_A")
+    k = parse_flux_diffusers_lora_key(
+        "transformer.single_transformer_blocks.37.proj_out.lora_B.weight")
+    assert (k.stream, k.block, k.module) == ("single", 37, "proj_out")
+
+
+def test_flux_double_grammar_cannot_swallow_single_namespace():
+    """`transformer_blocks` is a substring of `single_transformer_blocks` —
+    a key in the single namespace must come back tagged `stream="single"`,
+    never be mistaken for a double-block key with a mangled block index."""
+    k = parse_flux_diffusers_lora_key(
+        "transformer.single_transformer_blocks.5.attn.to_q.lora_A.weight")
+    assert k.stream == "single"
+    assert k.block == 5
+    assert k.module == "attn.to_q"
+
+    # A single-only leaf (no attn.to_out.0/ff.* on single blocks) must not be
+    # accepted by falling through to the double grammar.
+    with pytest.raises(UnconvertibleKeyError):
+        parse_flux_diffusers_lora_key(
+            "transformer.single_transformer_blocks.5.attn.to_out.0.lora_A.weight")
+
+
+def test_flux_block_index_is_anchored():
+    """blocks_1 vs blocks_11 (double, <=18) and blocks_3 vs blocks_37 (single,
+    <=37) must not be confused by a substring match."""
+    one = parse_flux_diffusers_lora_key(
+        "transformer.transformer_blocks.1.attn.to_q.lora_A.weight")
+    eleven = parse_flux_diffusers_lora_key(
+        "transformer.transformer_blocks.11.attn.to_q.lora_A.weight")
+    assert (one.block, eleven.block) == (1, 11)
+
+    three = parse_flux_diffusers_lora_key(
+        "transformer.single_transformer_blocks.3.attn.to_q.lora_A.weight")
+    thirty_seven = parse_flux_diffusers_lora_key(
+        "transformer.single_transformer_blocks.37.attn.to_q.lora_A.weight")
+    assert (three.block, thirty_seven.block) == (3, 37)
+
+    with pytest.raises(UnconvertibleKeyError):
+        parse_flux_diffusers_lora_key(
+            "transformer.transformer_blocks.19.attn.to_q.lora_A.weight")
+    with pytest.raises(UnconvertibleKeyError):
+        parse_flux_diffusers_lora_key(
+            "transformer.single_transformer_blocks.38.attn.to_q.lora_A.weight")
+
+
+@pytest.mark.parametrize("bad", [
+    # double-block leaf that doesn't exist on single blocks
+    "transformer.single_transformer_blocks.0.ff.net.2.lora_A.weight",
+    # single-only leaf on the double namespace
+    "transformer.transformer_blocks.0.proj_mlp.lora_A.weight",
+    "transformer.transformer_blocks.0.attn.to_qq.lora_A.weight",
+    "transformer.transformer_blocks.0.norm1.linear.lora_A.weight",
+    "transformer.transformer_blocks.19.attn.to_q.lora_A.weight",
+    "transformer.single_transformer_blocks.38.attn.to_q.lora_A.weight",
+    "transformer.transformer_blocks.0.attn.to_q.alpha",
+    "lora_unet_joint_blocks_0_x_block_attn_qkv.lora_down.weight",
+    "text_encoder.text_model.encoder.layers.0.self_attn.q_proj.lora_A.weight",
+])
+def test_flux_unknown_keys_rejected(bad):
+    with pytest.raises(UnconvertibleKeyError):
+        parse_flux_diffusers_lora_key(bad)
