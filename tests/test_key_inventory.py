@@ -138,3 +138,106 @@ def test_verify_rejects_unparseable_key():
     sd["transformer.transformer_blocks.0.norm1.linear.lora_A.weight"] = torch.zeros(2, 2)
     r = verify(sd, target)
     assert not r.ok
+
+
+# ---- SD3 default-arch unchanged ----
+
+def test_sd3_default_arch_matches_explicit_arch():
+    target = t([0, 23], ["attn", "mlp"])
+    assert expected_module_names(target) == expected_module_names(target, arch="sd3")
+
+    sd = build_sd(expected_module_names(target))
+    assert verify(sd, target) == verify(sd, target, arch="sd3")
+    assert verify(sd, target).ok
+
+
+# ---- FLUX ----
+
+def tf(blocks_double=None, blocks_single=None, classes=("attn", "mlp"), rank=16):
+    return {
+        "scope": "transformer",
+        "blocks_double": list(blocks_double) if blocks_double is not None else None,
+        "blocks_single": list(blocks_single) if blocks_single is not None else None,
+        "module_classes": list(classes),
+        "rank": rank,
+        "alpha": rank,
+    }
+
+
+def build_flux_sd(names, rank=16):
+    sd = {}
+    for i, n in enumerate(names):
+        sd.update(peft_module(n, rank, 8, 8, seed=i))
+    return sd
+
+
+def test_flux_full_coverage_count_is_exactly_pinned():
+    target = tf(blocks_double=(0, 18), blocks_single=(0, 37))
+    # 19 double blocks x 12 leaves + 38 single blocks x 5 leaves.
+    assert len(expected_module_names(target, arch="flux")) == 19 * 12 + 38 * 5 == 418
+
+
+def test_flux_range_subset_counts():
+    assert len(expected_module_names(
+        tf(blocks_double=(0, 3)), arch="flux")) == 4 * 12
+    assert len(expected_module_names(
+        tf(blocks_single=(0, 4)), arch="flux")) == 5 * 5
+    assert len(expected_module_names(
+        tf(blocks_double=(0, 3), blocks_single=(0, 4)), arch="flux")) == 4 * 12 + 5 * 5
+
+
+def test_flux_single_stream_class_filtering():
+    attn_only = expected_module_names(tf(blocks_single=(0, 37), classes=("attn",)), arch="flux")
+    mlp_only = expected_module_names(tf(blocks_single=(0, 37), classes=("mlp",)), arch="flux")
+    assert len(attn_only) == 38 * 3
+    assert len(mlp_only) == 38 * 2
+    assert "transformer.single_transformer_blocks.0.attn.to_q" in attn_only
+    assert "transformer.single_transformer_blocks.0.proj_mlp" not in attn_only
+    assert "transformer.single_transformer_blocks.0.proj_mlp" in mlp_only
+    assert "transformer.single_transformer_blocks.0.attn.to_q" not in mlp_only
+
+
+def test_flux_double_grammar_never_leaks_into_single_namespace():
+    """A double-only target must not expect/accept single-block keys, and
+    the blocks_11/blocks_37 substring trap must not silently pass either."""
+    target = tf(blocks_double=(0, 3))
+    names = set(expected_module_names(target, arch="flux"))
+    names.add("transformer.single_transformer_blocks.0.attn.to_q")
+    names.add("transformer.transformer_blocks.11.attn.to_q")
+    r = verify(build_flux_sd(names), target, arch="flux")
+    assert not r.ok
+    assert "transformer.single_transformer_blocks.0.attn.to_q" in r.unexpected
+    assert "transformer.transformer_blocks.11.attn.to_q" in r.unexpected
+
+
+def test_flux_clean_synthetic_checkpoint_verifies():
+    target = tf(blocks_double=(0, 18), blocks_single=(0, 37))
+    sd = build_flux_sd(expected_module_names(target, arch="flux"), rank=target["rank"])
+    r = verify(sd, target, arch="flux")
+    assert r.ok and not r.unexpected and not r.missing and not r.rank_mismatches
+
+
+def test_flux_mutations_report_exactly_three_findings():
+    # blocks_single stops at 36 (not 37) so single-block 37 is valid FLUX
+    # grammar yet outside this target's requested range — the "extra" case.
+    target = tf(blocks_double=(0, 18), blocks_single=(0, 36), rank=16)
+    names = sorted(expected_module_names(target, arch="flux"))
+
+    # Drop one (missing), keep the rest at the right rank.
+    missing_name = names[0]
+    kept = names[1:]
+    sd = build_flux_sd(kept, rank=16)
+
+    # Corrupt one existing module's rank.
+    bad_rank_name = kept[0]
+    sd.update(peft_module(bad_rank_name, 4, 8, 8))
+
+    # Add one extra/unexpected module (valid grammar, out of requested range).
+    extra_name = "transformer.single_transformer_blocks.37.attn.to_q"
+    sd.update(peft_module(extra_name, 16, 8, 8))
+
+    r = verify(sd, target, arch="flux")
+    assert not r.ok
+    assert r.missing == {missing_name}
+    assert r.rank_mismatches == {bad_rank_name: 4}
+    assert r.unexpected == {extra_name}
