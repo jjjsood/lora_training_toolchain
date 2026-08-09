@@ -3,7 +3,7 @@
 **Config-driven LoRA training toolchain for SD3-Medium (and FLUX): trains a matched-budget adapter matrix, verifies where each adapter actually landed, gates it on whether it changed anything, and synthesises norm-matched random controls.**
 
 [![Python](https://img.shields.io/badge/python-3.11-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/tests-211%20passing-success)](#development)
+[![Tests](https://img.shields.io/badge/tests-346%20passing-success)](#development)
 [![Trainer](https://img.shields.io/badge/trainer-kohya--ss%2Fsd--scripts%20v0.11.1-orange)](https://github.com/kohya-ss/sd-scripts)
 [![Ruff](https://img.shields.io/badge/lint-ruff-D7FF64?logo=ruff&logoColor=black)](https://docs.astral.sh/ruff/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
@@ -44,7 +44,7 @@ git clone <repo-url> lora_training_toolchain
 cd lora_training_toolchain
 
 uv sync
-uv run pytest -q                     # 285 tests, ~4 s, offline
+uv run pytest -q                     # 346 tests, ~5 s, offline
 
 uv run lorafactory resolve-config configs/matrix/L-E.yaml
 uv run lorafactory check-budget --configs configs/matrix
@@ -394,7 +394,7 @@ src/lorafactory/
   data/            dataset manifest validation and fetch
 configs/           base + matrix + fallback + gate + synth + survey + test
 docker/            kohya lockfile, entrypoint
-tests/             28 modules, CPU-only, offline
+tests/             31 modules, CPU-only, offline
 tools/             dump_kohya_args.py — one-shot sd-scripts argparse dump
 ```
 
@@ -402,7 +402,7 @@ tools/             dump_kohya_args.py — one-shot sd-scripts argparse dump
 
 ```bash
 uv sync
-uv run pytest -q        # 285 tests, CPU-only, no network, no weights
+uv run pytest -q        # 346 tests, CPU-only, no network, no weights
 uv run ruff check .
 uv run ruff format --check .
 ```
@@ -413,7 +413,7 @@ The suite never builds the image and never downloads weights. Ruff runs `E, F, I
 
 | Area | State |
 |---|---|
-| CPU pipeline — configs, budget check, kohya emission, conversion, key verification, gate stats, synth, introspection, provenance | implemented, 340 tests passing |
+| CPU pipeline — configs, budget check, kohya emission, conversion, key verification, gate stats, synth, introspection, provenance | implemented, 346 tests passing |
 | Intruder-dimension statistic | SD3 only — the base-key mapping is pinned for SD3's single-file layout; FLUX's fused `double_blocks.N.img_attn.qkv` needs its own slice convention. Norms, effective rank and top singular values work on any checkpoint. |
 | FLUX path | targeting, `verify-keys`, load path and the E_img gate are all FLUX-aware; the community survey config is scaffolded. See [The adapter matrix](#the-adapter-matrix), [Targeting and verification](#targeting-and-verification), [The E_img gate](#the-e_img-gate). |
 | Docker image | defined, built by hand, not exercised by CI |
