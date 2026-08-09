@@ -127,11 +127,11 @@ Eleven SD3 adapters share data, steps, LR, batch size and seed. The **only** dif
 | `O-F` | OBJ | attn + mlp | 0–23 | 16 | objective axis, paired with `L-F` |
 | `O-A` | OBJ | attn | 0–23 | 16 | objective × module type |
 | `O-M` | OBJ | mlp | 0–23 | 16 | objective × module type |
-| `F-F` | STYLE | attn + mlp | see note | 16 | FLUX replication of `L-F` |
+| `F-F` | STYLE | attn + mlp | double 0–18, single 0–37 | 16 | FLUX replication of `L-F` |
 
 `L-E` and `L-L` are the ones that matter most: their site of action is known in advance, so they are the check on whether downstream analysis can recover an answer it was already told. `L-T` is the matching negative control — it adapts CLIP-L and CLIP-G only, no transformer block and no T5 (diffusers 0.39 has no `text_encoder_3` LoRA path, so a T5-adapted checkpoint would load silently incomplete).
 
-`F-F` trains on FLUX.1-dev, overrides `model`/`train` (fp8 base, `blocks_to_swap: 16`) and is exempt from the SD3 matched budget. **FLUX support is partial**: the network-args path emits `networks.lora_flux`, but block-range bounds checking and `verify-keys` are SD3-only. See [Status](#status).
+`F-F` trains on FLUX.1-dev, overrides `model`/`train` (fp8 base, `blocks_to_swap: 16`) and is exempt from the SD3 matched budget. Its `target` section uses FLUX's two disjoint block namespaces — `blocks_double: [0, 18]` and `blocks_single: [0, 37]` — instead of SD3's single `blocks` range; see [Targeting and verification](#targeting-and-verification).
 
 Three fallback configs (`configs/fallback/X-OVERFIT.yaml`, `X-R128.yaml`, `X-SHORT.yaml`) are documented retrain recipes for gate-rejected adapters. They carry `budget_exempt: true` and are excluded from the matched-budget check by design.
 
@@ -143,16 +143,20 @@ Three fallback configs (`configs/fallback/X-OVERFIT.yaml`, `X-R128.yaml`, `X-SHO
 
 The toolchain closes that two ways, neither of which trusts a pattern:
 
-**1. Targeting is emitted as explicit kohya arguments, not patterns.** A `target` section becomes a `network_args` list for `networks.lora_sd3` / `networks.lora_flux`:
+**1. Targeting is emitted as explicit kohya arguments, not patterns.** A `target` section becomes a `network_args` list for `networks.lora_sd3` / `networks.lora_flux`. The two architectures use different arg names — SD3 has one flat block range, FLUX has two disjoint index namespaces (double 0–18, single 0–37) that don't share a `train_block_indices` arg at all:
 
-| Config | Emitted |
-|---|---|
-| `blocks: [0, 7]` | `train_block_indices=0-7` — an index range, no string matching |
-| `module_classes: [attn]` | `context_mlp_dim=0`, `x_mlp_dim=0` — the excluded class is zeroed |
-| `scope: text_encoders` | `network_train_text_encoder_only=true`, no transformer args |
-| always | `context_mod_dim=0` / `x_mod_dim=0` (SD3), `img_/txt_/single_mod_dim=0` (FLUX) — adaLN is outside the spec vocabulary |
+| Config | Family | Emitted |
+|---|---|---|
+| `blocks: [0, 7]` | SD3 | `train_block_indices=0-7` — an index range, no string matching |
+| `module_classes: [attn]` | SD3 | `context_mlp_dim=0`, `x_mlp_dim=0` — the excluded class is zeroed |
+| `blocks_double: [0, 18]` | FLUX | `train_double_block_indices=0-18` (absent stream → `=none`) |
+| `blocks_single: [0, 37]` | FLUX | `train_single_block_indices=0-37` (absent stream → `=none`) |
+| `module_classes: [attn]` | FLUX | `img_mlp_dim=0`, `txt_mlp_dim=0` — the excluded class is zeroed |
+| `scope: text_encoders` | either | `network_train_text_encoder_only=true`, no transformer args |
+| always | SD3 | `context_mod_dim=0`, `x_mod_dim=0` — adaLN is outside the spec vocabulary |
+| always | FLUX | `img_mod_dim=0`, `txt_mod_dim=0`, `single_mod_dim=0` — adaLN is outside the spec vocabulary |
 
-kohya does **not** bounds-check `train_block_indices`, so `network_args.py` enforces 0–23 itself and refuses an empty `module_classes` or a descending range.
+kohya does **not** bounds-check either arg family, so `network_args.py` enforces the bounds itself (SD3 0–23; FLUX double 0–18, single 0–37) and refuses an empty `module_classes` or a descending range. FLUX's single-stream blocks fuse attn and mlp into one kohya module (`linear1`/`linear2` share a single `single_dim`), so per-class exclusion is inexpressible there: a `blocks_single` target with `module_classes` missing either `attn` or `mlp` is rejected outright rather than silently zeroing the wrong thing.
 
 **2. The finished checkpoint is diffed against the config it claims.** `verify-keys` builds the full expected module-name set from pinned constants — never introspected from a live model — and compares it to the converted state dict, reporting `unexpected`, `missing` and `rank_mismatches`. An upstream rename surfaces as a loud diff rather than a quietly narrower adapter.
 
@@ -255,6 +259,8 @@ An adapter that does not visibly change the image cannot be expected to change a
 - **and** null sanity: the base-vs-base δ must stay ≤ `0.2`.
 
 Same gate screens downloaded community checkpoints via `screen`. A rejection is documented and retrained from `configs/fallback/`, not quietly dropped.
+
+`configs/gate/e_img_flux.yaml` runs the same grid and thresholds on FLUX.1-schnell: `guidance_scale 0.0`, 4 inference steps, euler scheduler only, no negative prompt — schnell's distillation makes CFG and long sampling meaningless, so the render path rejects any SD3-only render key for a `flux_schnell` family config (and the inverse). Metrics and Cliff's-δ verdict logic are image-space and unchanged between families.
 
 `synth` is the matching control on the other side: Gaussian adapters rescaled **per module** so `‖B·A‖_F` matches a reference adapter module-for-module, with a recipe recording target norm, achieved norm and rank per module. It answers *"would any perturbation of that size do this?"*.
 
@@ -405,9 +411,9 @@ The suite never builds the image and never downloads weights. Ruff runs `E, F, I
 
 | Area | State |
 |---|---|
-| CPU pipeline — configs, budget check, kohya emission, conversion, key verification, gate stats, synth, introspection, provenance | implemented, 285 tests passing |
+| CPU pipeline — configs, budget check, kohya emission, conversion, key verification, gate stats, synth, introspection, provenance | implemented, 340 tests passing |
 | Intruder-dimension statistic | SD3 only — the base-key mapping is pinned for SD3's single-file layout; FLUX's fused `double_blocks.N.img_attn.qkv` needs its own slice convention. Norms, effective rank and top singular values work on any checkpoint. |
-| FLUX path | partial — `networks.lora_flux` args emitted; block bounds and `verify-keys` are SD3-only |
+| FLUX path | targeting, `verify-keys`, load path and the E_img gate are all FLUX-aware; the community survey config is scaffolded. See [The adapter matrix](#the-adapter-matrix), [Targeting and verification](#targeting-and-verification), [The E_img gate](#the-e_img-gate). |
 | Docker image | defined, built by hand, not exercised by CI |
 | STYLE / OBJ datasets | **do not exist — blocking item** |
 | Training runs, adapters, gate results | none |
