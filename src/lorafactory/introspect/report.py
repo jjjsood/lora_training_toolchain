@@ -13,6 +13,13 @@ CSV header (exactly, in this order):
     adapter, block, module, rank, frob_norm, effective_rank,
     top_sigma_1 .. top_sigma_k, n_intruders, intruder_score
 
+k truncates every direction-valued statistic, including the intruder count:
+`n_intruders` is computed over the adapter's *top-k* left singular directions
+(`min(k, r)` of them), not all r. The config JSON records that as
+`"adapter_directions": "top_k"`, and carries `intruder_modules_matched` /
+`intruder_modules_unmatched` so a partly-wrong base-key mapping is visible as a
+count rather than as a scatter of blank cells.
+
 Alpha, applied exactly once
 ---------------------------
 A kohya module stores `lora_down`, `lora_up` and `alpha`, and the effective
@@ -57,6 +64,10 @@ from lorafactory.survey.introspect import (
 
 _SUFFIXES = {"kohya": (KOHYA_DOWN, KOHYA_UP), "peft": (PEFT_A, PEFT_B)}
 
+#: Which adapter directions the intruder count is computed over. Recorded in the
+#: config JSON so a thesis figure can cite the choice rather than assume it.
+ADAPTER_DIRECTIONS = "top_k"
+
 # Block index of a module name, in either spelling:
 #   transformer.transformer_blocks.5.attn.to_q
 #   lora_unet_joint_blocks_5_x_block_attn_qkv
@@ -90,6 +101,11 @@ class ModuleStats:
     n_intruders: int | None = None
     intruder_score: float | None = None
 
+    @property
+    def intruder_matched(self) -> bool:
+        """True iff a base subspace was found and compared for this module."""
+        return self.n_intruders is not None
+
 
 @dataclass(frozen=True)
 class IntrospectionReport:
@@ -101,11 +117,37 @@ class IntrospectionReport:
     tau: float
     base_revision: str = ""
     base_checkpoint: str = ""
+    base_used: bool = False
     rows: tuple[ModuleStats, ...] = field(default_factory=tuple)
 
     @property
     def has_intruder_stats(self) -> bool:
-        return any(row.n_intruders is not None for row in self.rows)
+        return any(row.intruder_matched for row in self.rows)
+
+    @property
+    def intruder_matched(self) -> int:
+        """Modules whose base subspace was found — an intruder count was computed."""
+        return sum(1 for row in self.rows if row.intruder_matched)
+
+    @property
+    def intruder_unmatched(self) -> int:
+        """Modules the intruder path was attempted for and could not resolve.
+
+        Zero when no base was supplied at all (nothing was attempted). A
+        non-zero count with a base supplied is the signal that separates "this
+        architecture has no pinned mapping" from "the mapping has a typo":
+        both leave cells blank, only the counts say how many.
+        """
+        if not self.base_used:
+            return 0
+        return len(self.rows) - self.intruder_matched
+
+    def unmatched_modules(self, limit: int | None = None) -> tuple[str, ...]:
+        """Names of the modules with no base subspace, for a diagnostic message."""
+        if not self.base_used:
+            return ()
+        names = tuple(row.module for row in self.rows if not row.intruder_matched)
+        return names if limit is None else names[:limit]
 
 
 def detect_lora_layout(sd: Mapping | Iterable[str]) -> str:
@@ -159,8 +201,13 @@ def module_stats(
         # this checkpoint's architecture: leave the columns empty rather than
         # comparing directions that live in different spaces.
         if base_topk is not None and base_topk.shape[0] == svd.u_vectors.shape[0]:
+            # Score the adapter's top-k directions, not all r of them: the same
+            # truncation that governs top_sigma_1..k. Scoring all r against the
+            # base's top-k would let a rank-64 adapter's 50 lowest-energy
+            # directions — which carry almost none of ΔW — dominate the headline
+            # number, and they are exactly the ones most likely to look novel.
             n_intruders, intruder_score = intruder_stats(
-                svd.u_vectors, base_topk, settings.tau
+                svd.u_vectors[:, :k], base_topk, settings.tau
             )
 
     return ModuleStats(
@@ -225,6 +272,7 @@ def introspect_checkpoint(
             if base_cache is not None and base_cache.base_checkpoint is not None
             else ""
         ),
+        base_used=base_cache is not None,
         rows=tuple(rows),
     )
 
@@ -290,13 +338,16 @@ def write_config_json(report: IntrospectionReport, path: Path | str) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
-        "checkpoint": report.checkpoint,
-        "layout": report.layout,
-        "k": report.k,
-        "tau": report.tau,
-        "base_revision": report.base_revision,
+        "adapter_directions": ADAPTER_DIRECTIONS,
         "base_checkpoint": report.base_checkpoint,
+        "base_revision": report.base_revision,
+        "checkpoint": report.checkpoint,
+        "intruder_modules_matched": report.intruder_matched,
+        "intruder_modules_unmatched": report.intruder_unmatched,
         "intruder_stats": report.has_intruder_stats,
+        "k": report.k,
+        "layout": report.layout,
         "module_count": len(report.rows),
+        "tau": report.tau,
     }
     path.write_text(json.dumps(payload, indent=2, sort_keys=True))

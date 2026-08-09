@@ -41,6 +41,8 @@ effective_rank and top_sigma; their intruder columns come out empty.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -157,6 +159,27 @@ def top_left_subspace(weight: torch.Tensor, k: int) -> torch.Tensor:
     return u[:, :k].contiguous()
 
 
+class StaleSubspaceCacheError(ValueError):
+    """The cache under this revision was built from a different base file."""
+
+
+#: Marker recording which base file a revision's cached subspaces came from.
+BASE_MARKER_FILENAME = "base.json"
+
+
+def base_fingerprint(checkpoint: Path | str) -> str:
+    """A cheap identity for a base checkpoint: resolved path, size, mtime.
+
+    Not a content hash — hashing a multi-GB base checkpoint on every run is
+    exactly the cost this cache exists to avoid. It is enough to tell two
+    different files apart, which is all the staleness guard needs.
+    """
+    path = Path(checkpoint).resolve()
+    stat = path.stat()
+    payload = f"{path}:{stat.st_size}:{stat.st_mtime_ns}"
+    return hashlib.sha256(payload.encode()).hexdigest()[:16]
+
+
 class BaseSubspaceCache:
     """Disk-cached top-k left subspaces of the base model's weights.
 
@@ -165,6 +188,16 @@ class BaseSubspaceCache:
     ``base_checkpoint`` may be omitted to run purely off an already-populated
     cache (the offline case: the subspaces were computed on the machine that
     has the weights, and the cache directory travelled with the results).
+
+    Staleness guard. The revision string is a *claim* about which weights these
+    subspaces describe, and a wrong claim is worse than no cache: it yields a
+    plausible intruder count computed against the wrong model. So the first
+    write under a revision drops a `base.json` marker recording the base file's
+    fingerprint, and every later use with a base checkpoint checks it. A second
+    run pointing `--base` at a different file under the same revision raises
+    `StaleSubspaceCacheError` instead of silently reusing the first one's
+    subspaces. `lorafactory introspect` additionally refuses `--base` without an
+    explicit `--base-revision`, so the revision is never a placeholder.
     """
 
     def __init__(
@@ -178,15 +211,56 @@ class BaseSubspaceCache:
         self.base_checkpoint = Path(base_checkpoint) if base_checkpoint is not None else None
         self.hits = 0
         self.misses = 0
+        self._identity_checked = False
 
     @property
     def root(self) -> Path:
         return self.cache_dir / ".cache" / "introspect" / self.model_revision
 
+    @property
+    def marker_path(self) -> Path:
+        return self.root / BASE_MARKER_FILENAME
+
     def subspace_path(self, module_name: str, k: int) -> Path:
         """`{cache_dir}/.cache/introspect/{revision}/{module}.k{k}.safetensors`."""
         safe_name = module_name.replace("/", "_")
         return self.root / f"{safe_name}.k{k}.safetensors"
+
+    def check_base_identity(self) -> None:
+        """Bind this revision's cache to one base file, or refuse to use it.
+
+        A no-op when no base checkpoint was supplied: a cache-only reader has
+        nothing to contradict, and the recorded marker is what the offline
+        results carry as provenance.
+        """
+        if self._identity_checked or self.base_checkpoint is None:
+            return
+
+        fingerprint = base_fingerprint(self.base_checkpoint)
+        marker = self.marker_path
+        if marker.exists():
+            recorded = json.loads(marker.read_text())
+            if recorded.get("fingerprint") != fingerprint:
+                raise StaleSubspaceCacheError(
+                    f"cache {self.root} was built from {recorded.get('checkpoint')!r} "
+                    f"(fingerprint {recorded.get('fingerprint')}), but --base is "
+                    f"{str(self.base_checkpoint)!r} (fingerprint {fingerprint}). "
+                    "Use a different --base-revision or clear the cache directory."
+                )
+        else:
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            marker.write_text(
+                json.dumps(
+                    {
+                        "checkpoint": str(Path(self.base_checkpoint).resolve()),
+                        "fingerprint": fingerprint,
+                        "revision": self.model_revision,
+                    },
+                    indent=2,
+                    sort_keys=True,
+                )
+            )
+        self._identity_checked = True
 
     def top_k_subspace(self, module_name: str, k: int) -> torch.Tensor | None:
         """Top-k base subspace for one adapter module, computing it at most once.
@@ -195,6 +269,7 @@ class BaseSubspaceCache:
         encoders), when no base checkpoint is available to compute from, or
         when the base checkpoint does not carry the mapped tensor.
         """
+        self.check_base_identity()
         path = self.subspace_path(module_name, k)
         if path.exists():
             self.hits += 1

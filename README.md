@@ -44,7 +44,7 @@ git clone <repo-url> lora_training_toolchain
 cd lora_training_toolchain
 
 uv sync
-uv run pytest -q                     # 279 tests, ~4 s, offline
+uv run pytest -q                     # 285 tests, ~4 s, offline
 
 uv run lorafactory resolve-config configs/matrix/L-E.yaml
 uv run lorafactory check-budget --configs configs/matrix
@@ -392,7 +392,7 @@ tools/             dump_kohya_args.py — one-shot sd-scripts argparse dump
 
 ```bash
 uv sync
-uv run pytest -q        # 279 tests, CPU-only, no network, no weights
+uv run pytest -q        # 285 tests, CPU-only, no network, no weights
 uv run ruff check .
 uv run ruff format --check .
 ```
@@ -403,7 +403,7 @@ The suite never builds the image and never downloads weights. Ruff runs `E, F, I
 
 | Area | State |
 |---|---|
-| CPU pipeline — configs, budget check, kohya emission, conversion, key verification, gate stats, synth, introspection, provenance | implemented, 279 tests passing |
+| CPU pipeline — configs, budget check, kohya emission, conversion, key verification, gate stats, synth, introspection, provenance | implemented, 285 tests passing |
 | Intruder-dimension statistic | SD3 only — the base-key mapping is pinned for SD3's single-file layout; FLUX's fused `double_blocks.N.img_attn.qkv` needs its own slice convention. Norms, effective rank and top singular values work on any checkpoint. |
 | FLUX path | partial — `networks.lora_flux` args emitted; block bounds and `verify-keys` are SD3-only |
 | Docker image | defined, built by hand, not exercised by CI |

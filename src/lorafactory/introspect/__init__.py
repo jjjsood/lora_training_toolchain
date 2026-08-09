@@ -16,6 +16,8 @@ from lorafactory.introspect.base_cache import (
     SD3_BASE_KEY_MAP,
     BaseKeyRef,
     BaseSubspaceCache,
+    StaleSubspaceCacheError,
+    base_fingerprint,
     base_key_for,
     load_base_weight,
 )
@@ -27,6 +29,7 @@ from lorafactory.introspect.linalg import (
     lora_singular_values,
 )
 from lorafactory.introspect.report import (
+    ADAPTER_DIRECTIONS,
     IntrospectionReport,
     ModuleStats,
     Settings,
@@ -40,6 +43,7 @@ from lorafactory.introspect.report import (
 )
 
 __all__ = [
+    "ADAPTER_DIRECTIONS",
     "BaseKeyRef",
     "BaseSubspaceCache",
     "IntrospectionReport",
@@ -47,6 +51,8 @@ __all__ = [
     "ModuleStats",
     "SD3_BASE_KEY_MAP",
     "Settings",
+    "StaleSubspaceCacheError",
+    "base_fingerprint",
     "base_key_for",
     "block_of",
     "csv_header",

@@ -30,9 +30,11 @@ from conftest import MATRIX, delta_w_kohya, delta_w_peft, kohya_module, peft_mod
 from lorafactory.cli import cli
 from lorafactory.convert.sd3_kohya_to_diffusers import convert
 from lorafactory.introspect.base_cache import (
+    BASE_MARKER_FILENAME,
     SD3_BASE_KEY_MAP,
     BaseKeyRef,
     BaseSubspaceCache,
+    StaleSubspaceCacheError,
     base_key_for,
     load_base_weight,
 )
@@ -44,6 +46,7 @@ from lorafactory.introspect.linalg import (
     lora_singular_values,
 )
 from lorafactory.introspect.report import (
+    ADAPTER_DIRECTIONS,
     csv_header,
     detect_lora_layout,
     introspect_checkpoint,
@@ -393,6 +396,54 @@ def test_base_subspace_cache_roundtrip_and_hit(tmp_path):
     assert cache.top_k_subspace("some.flux.module", 4) is None
 
 
+def test_cache_refuses_a_second_base_file_under_one_revision(tmp_path):
+    """The staleness guard. A revision string is a claim about which weights
+    the cached subspaces describe; pointing a second, different base file at
+    the same revision must fail loudly rather than reuse the first one's
+    subspaces and report an intruder count for the wrong model."""
+    module = "transformer.transformer_blocks.0.attn.to_out.0"
+    key = "model.diffusion_model.joint_blocks.0.x_block.attn.proj.weight"
+    g = torch.Generator().manual_seed(43)
+    first = base_checkpoint_with(tmp_path / "a.safetensors", key, torch.randn(12, 12, generator=g))
+    second = base_checkpoint_with(
+        tmp_path / "b.safetensors", key, torch.randn(12, 12, generator=g)
+    )
+
+    cache = BaseSubspaceCache(tmp_path, "rev-one", base_checkpoint=first)
+    u_first = cache.top_k_subspace(module, 4)
+    marker = tmp_path / ".cache" / "introspect" / "rev-one" / BASE_MARKER_FILENAME
+    assert marker.exists()
+    assert json.loads(marker.read_text())["checkpoint"] == str(first.resolve())
+
+    stale = BaseSubspaceCache(tmp_path, "rev-one", base_checkpoint=second)
+    with pytest.raises(StaleSubspaceCacheError) as excinfo:
+        stale.top_k_subspace(module, 4)
+    assert "b.safetensors" in str(excinfo.value)
+
+    # The honest way to say "different weights" is a different revision.
+    fresh = BaseSubspaceCache(tmp_path, "rev-two", base_checkpoint=second)
+    assert not torch.allclose(projector(fresh.top_k_subspace(module, 4)), projector(u_first))
+    # ...and re-running with the original base against its own revision is fine.
+    again = BaseSubspaceCache(tmp_path, "rev-one", base_checkpoint=first)
+    assert torch.allclose(again.top_k_subspace(module, 4), u_first)
+
+
+def test_cache_only_reader_needs_no_base_identity(tmp_path):
+    """A cache that travelled without its weights has nothing to contradict."""
+    module = "transformer.transformer_blocks.0.attn.to_out.0"
+    key = "model.diffusion_model.joint_blocks.0.x_block.attn.proj.weight"
+    g = torch.Generator().manual_seed(44)
+    base = base_checkpoint_with(
+        tmp_path / "base.safetensors", key, torch.randn(12, 12, generator=g)
+    )
+    seeded = BaseSubspaceCache(tmp_path, "rev-travel", base_checkpoint=base)
+    expected = seeded.top_k_subspace(module, 4)
+
+    base.unlink()
+    offline = BaseSubspaceCache(tmp_path, "rev-travel")
+    assert torch.allclose(offline.top_k_subspace(module, 4), expected)
+
+
 # --------------------------------------------------------------------------
 # intruder statistic end to end
 # --------------------------------------------------------------------------
@@ -458,8 +509,47 @@ def test_random_lora_against_a_random_base_is_all_intruders(tmp_path):
 
     cache = BaseSubspaceCache(tmp_path, "rev-random", base_checkpoint=base)
     row = introspect_checkpoint(ckpt, base_cache=cache, k=10, tau=0.5).rows[0]
+    # k=10 > r=8, so the direction set is min(k, r) == 8.
     assert row.n_intruders == 8
     assert row.intruder_score == 1.0
+
+
+def test_intruder_count_is_scored_over_the_top_k_adapter_directions(tmp_path):
+    """k truncates the direction set the same way it truncates top_sigma_*.
+
+    The adapter below has its three *strongest* directions inside the base's
+    subspace and five weak ones outside it. Under k=3 it must score 0/3 — the
+    top three directions are all the base's. Scoring all r=8 directions against
+    the base's top 3 would instead report 5 intruders carrying almost none of
+    ΔW's energy, which is the bias this truncation removes.
+    """
+    module = "transformer.transformer_blocks.0.attn.to_out.0"
+    key = "model.diffusion_model.joint_blocks.0.x_block.attn.proj.weight"
+    dim = 32
+    q = orthonormal(dim, 16, seed=56)
+    base_dirs = q[:, :8]
+    adapter_dirs = torch.cat([q[:, :3], q[:, 8:13]], dim=1)  # 3 aligned, 5 fresh
+
+    base = sd3_base_with_subspace(tmp_path / "base.safetensors", key, base_dirs, dim, seed=57)
+    down, up = aligned_lora(adapter_dirs, dim, seed=58)
+    ckpt = write_checkpoint(
+        tmp_path / "mixed.safetensors",
+        {f"{module}.lora_A.weight": down, f"{module}.lora_B.weight": up},
+    )
+
+    def row_for(k):
+        cache = BaseSubspaceCache(tmp_path, "rev-topk", base_checkpoint=base)
+        return introspect_checkpoint(ckpt, base_cache=cache, k=k, tau=0.5).rows[0]
+
+    top3 = row_for(3)
+    assert top3.rank == 8
+    assert top3.n_intruders == 0
+    assert top3.intruder_score == 0.0
+
+    # Widen k and the five weak directions come into scope, as they should.
+    top8 = row_for(8)
+    assert top8.n_intruders == 5
+    assert close(top8.intruder_score, 5 / 8, 1e-9)
 
 
 def test_intruder_columns_are_empty_without_a_base(tmp_path):
@@ -471,8 +561,47 @@ def test_intruder_columns_are_empty_without_a_base(tmp_path):
     row = report.rows[0]
     assert row.n_intruders is None and row.intruder_score is None
     assert report.has_intruder_stats is False
+    # Nothing was attempted, so nothing counts as unmatched.
+    assert (report.intruder_matched, report.intruder_unmatched) == (0, 0)
+    assert report.unmatched_modules() == ()
     # ... and the other three statistics are still there.
     assert row.frob_norm > 0 and row.effective_rank > 0 and len(row.top_sigma) == 4
+
+
+def test_partial_base_mapping_is_counted_not_silently_blank(tmp_path):
+    """A base that resolves for some modules and not others must show up as
+    counts. Blank cells alone cannot distinguish "this architecture has no
+    mapping" from "the mapping has a typo"; the matched/unmatched pair can."""
+    key = "model.diffusion_model.joint_blocks.0.x_block.attn.proj.weight"
+    dim = 12
+    g = torch.Generator().manual_seed(59)
+    base = base_checkpoint_with(
+        tmp_path / "base.safetensors", key, torch.randn(dim, dim, generator=g)
+    )
+
+    matched = "transformer.transformer_blocks.0.attn.to_out.0"  # mapped and present
+    missing = "transformer.transformer_blocks.0.attn.to_q"      # mapped, absent from this base
+    unmapped = "double_blocks.0.img_attn.qkv"                    # FLUX: no mapping at all
+    sd = {}
+    for name in (matched, missing, unmapped):
+        sd.update(peft_module(name, 4, dim, dim, seed=60))
+    ckpt = write_checkpoint(tmp_path / "partial.safetensors", sd)
+
+    cache = BaseSubspaceCache(tmp_path, "rev-partial", base_checkpoint=base)
+    report = introspect_checkpoint(ckpt, base_cache=cache, k=4, tau=0.5)
+
+    assert report.base_used is True
+    assert report.intruder_matched == 1
+    assert report.intruder_unmatched == 2
+    assert set(report.unmatched_modules()) == {missing, unmapped}
+    assert len(report.unmatched_modules(limit=1)) == 1
+    assert report.has_intruder_stats is True
+
+    out = tmp_path / "config.json"
+    write_config_json(report, out)
+    payload = json.loads(out.read_text())
+    assert payload["intruder_modules_matched"] == 1
+    assert payload["intruder_modules_unmatched"] == 2
 
 
 # --------------------------------------------------------------------------
@@ -572,8 +701,13 @@ def test_config_json_records_k_tau_and_base_revision(tmp_path):
     assert payload["base_revision"] == "sha-1234"
     assert payload["layout"] == "peft"
     assert payload["module_count"] == 2
-    # No base weights were reachable, so the empty intruder columns are recorded.
+    # No base weights were reachable, so the empty intruder columns are recorded
+    # together with the count of modules that could not be resolved.
     assert payload["intruder_stats"] is False
+    assert payload["intruder_modules_matched"] == 0
+    assert payload["intruder_modules_unmatched"] == 2
+    # The direction set the intruder count spans is cited, not assumed.
+    assert payload["adapter_directions"] == ADAPTER_DIRECTIONS == "top_k"
     assert out.read_text() == json.dumps(payload, indent=2, sort_keys=True)
 
 
@@ -666,6 +800,49 @@ def test_cli_introspect_defaults_the_adapter_id_to_the_stem(tmp_path):
     assert result.exit_code == 0, result.output
     rows = list(csv.reader((out_dir / "introspect.csv").open(newline="")))
     assert {row[0] for row in rows[1:]} == {"L-R64"}
+
+
+def test_cli_introspect_refuses_a_base_without_a_revision(tmp_path):
+    """An unnamed base would share a cache directory with any other base."""
+    ckpt, _ = mixed_rank_checkpoint(tmp_path / "adapter.safetensors")
+    base = base_checkpoint_with(
+        tmp_path / "base.safetensors",
+        "model.diffusion_model.joint_blocks.0.x_block.attn.proj.weight",
+        torch.zeros(8, 8),
+    )
+    result = CliRunner().invoke(
+        cli, ["introspect", str(ckpt), "--out", str(tmp_path / "o"), "--base", str(base)]
+    )
+    assert result.exit_code != 0
+    assert "--base-revision" in result.output
+
+
+def test_cli_introspect_reports_matched_and_unmatched_counts(tmp_path):
+    key = "model.diffusion_model.joint_blocks.0.x_block.attn.proj.weight"
+    dim = 12
+    g = torch.Generator().manual_seed(71)
+    base = base_checkpoint_with(
+        tmp_path / "base.safetensors", key, torch.randn(dim, dim, generator=g)
+    )
+    sd = {}
+    sd.update(peft_module("transformer.transformer_blocks.0.attn.to_out.0", 4, dim, dim, seed=72))
+    sd.update(peft_module("double_blocks.0.img_attn.qkv", 4, dim, dim, seed=73))
+    ckpt = write_checkpoint(tmp_path / "adapter.safetensors", sd)
+
+    out_dir = tmp_path / "out"
+    result = CliRunner().invoke(
+        cli,
+        ["introspect", str(ckpt), "--out", str(out_dir), "--base", str(base),
+         "--base-revision", "sha-777", "--k", "4"],
+    )
+    assert result.exit_code == 0, result.output
+    assert "intruder subspaces: 1 matched, 1 unmatched" in result.output
+    assert "double_blocks.0.img_attn.qkv" in result.output
+
+    payload = json.loads((out_dir / "introspect.config.json").read_text())
+    assert payload["intruder_modules_matched"] == 1
+    assert payload["intruder_modules_unmatched"] == 1
+    assert payload["base_revision"] == "sha-777"
 
 
 def test_cli_introspect_fails_loudly_on_a_non_lora_checkpoint(tmp_path):

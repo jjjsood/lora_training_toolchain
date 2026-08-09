@@ -417,11 +417,19 @@ def introspect(checkpoint: Path, out_dir: Path, base_checkpoint: Path | None,  #
     """
     if k < 1:
         raise click.ClickException("--k must be at least 1")
+    if base_checkpoint is not None and not base_revision:
+        # The subspace cache is keyed by revision. A placeholder revision would
+        # let a second run against different weights silently reuse the first
+        # run's subspaces, i.e. report an intruder count for the wrong model.
+        raise click.ClickException(
+            "--base requires --base-revision: the subspace cache is keyed by it, "
+            "and an unnamed base would let two different checkpoints share a cache"
+        )
 
     base_cache = None
     if base_checkpoint is not None or base_revision:
         base_cache = BaseSubspaceCache(
-            out_dir, base_revision or "unpinned", base_checkpoint=base_checkpoint
+            out_dir, base_revision, base_checkpoint=base_checkpoint
         )
 
     try:
@@ -436,8 +444,17 @@ def introspect(checkpoint: Path, out_dir: Path, base_checkpoint: Path | None,  #
     write_config_json(report, config_path)
 
     click.echo(f"{len(report.rows)} modules ({report.layout} layout) -> {csv_path}")
-    if base_cache is not None and not report.has_intruder_stats:
-        click.echo("no base subspace matched: intruder columns are empty", err=True)
+    if base_cache is not None:
+        matched = report.intruder_matched
+        unmatched = report.intruder_unmatched
+        click.echo(f"intruder subspaces: {matched} matched, {unmatched} unmatched")
+        if unmatched:
+            examples = ", ".join(report.unmatched_modules(limit=3))
+            click.echo(
+                f"{unmatched} module(s) have no base subspace (intruder columns "
+                f"empty), first: {examples}",
+                err=True,
+            )
     click.echo(str(config_path))
 
 
