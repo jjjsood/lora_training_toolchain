@@ -306,7 +306,8 @@ def test_train_dry_run_emits_a_launch_plan(tmp_path, monkeypatch):
     fake_model_root(tmp_path, monkeypatch)
     fake_kohya_env(tmp_path, monkeypatch)
 
-    result = run("train", "--config", str(MATRIX / "L-E.yaml"), "--dry-run")
+    result = run("train", "--config", str(MATRIX / "L-E.yaml"),
+                 "--runs-dir", str(tmp_path / "runs"), "--dry-run")
     assert result.exit_code == 0, result.output
 
     plan = json.loads(result.output)
@@ -330,6 +331,7 @@ def test_train_dry_run_spawns_nothing(tmp_path, monkeypatch):
     monkeypatch.setattr(subprocess, "run", explode)
     monkeypatch.setattr(subprocess, "Popen", explode)
     assert run("train", "--config", str(MATRIX / "L-E.yaml"),
+               "--runs-dir", str(tmp_path / "runs"),
                "--dry-run").exit_code == 0
 
 
@@ -339,7 +341,8 @@ def test_train_matrix_dry_run_covers_every_adapter(tmp_path, monkeypatch):
     fake_model_root(tmp_path, monkeypatch)
     fake_kohya_env(tmp_path, monkeypatch)
 
-    result = run("train-matrix", "--configs", str(MATRIX), "--dry-run")
+    result = run("train-matrix", "--configs", str(MATRIX),
+                 "--runs-dir", str(tmp_path / "runs"), "--dry-run")
     assert result.exit_code == 0, result.output
     plans = json.loads(result.output)
     assert {p["adapter_id"] for p in plans} == set(ALL_MATRIX_IDS)
