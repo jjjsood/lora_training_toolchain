@@ -50,6 +50,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         # reaches the GPU.
         libgl1 \
         libglib2.0-0 \
+        # triton (pulled in by the cu128 torch wheels) compiles its launcher
+        # stub with a host C compiler at runtime; without one, sd-scripts dies
+        # on `import diffusers` with "Failed to find C compiler".
+        gcc \
     && rm -rf /var/lib/apt/lists/*
 
 # --- uv -------------------------------------------------------------------
