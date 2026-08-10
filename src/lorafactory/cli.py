@@ -26,11 +26,17 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
 import click
 from huggingface_hub import hf_hub_download
+from huggingface_hub.errors import (
+    EntryNotFoundError,
+    GatedRepoError,
+    RepositoryNotFoundError,
+)
 from safetensors.torch import load_file, save_file
 
 from lorafactory.config.budget import check_matrix
@@ -538,17 +544,47 @@ def _local_dir_for(local_path: Path, filename: str) -> Path:
     return root
 
 
+#: Retry policy for weight downloads. hf_hub_download resumes partial files,
+#: so retrying after a transient network failure (DNS flake, CDN reset) only
+#: re-fetches the bytes not yet on disk.
+DOWNLOAD_ATTEMPTS = 3
+DOWNLOAD_BACKOFF_SECONDS = (5, 25)
+
+#: Never retried: these mean the plan or the token is wrong, and no amount of
+#: waiting turns a 404/403 into the pinned file.
+_PERMANENT_DOWNLOAD_ERRORS = (
+    EntryNotFoundError, GatedRepoError, RepositoryNotFoundError,
+)
+
+
 def _download_weights(files: list[dict]) -> None:
     """Pull every entry of a `download_plan` to its resolved local path."""
     for entry in files:
         local_path = Path(entry["local_path"])
         local_path.parent.mkdir(parents=True, exist_ok=True)
-        hf_hub_download(
-            repo_id=entry["repo_id"],
-            revision=entry["revision"],
-            filename=entry["filename"],
-            local_dir=str(_local_dir_for(local_path, str(entry["filename"]))),
-        )
+        for attempt in range(DOWNLOAD_ATTEMPTS):
+            try:
+                hf_hub_download(
+                    repo_id=entry["repo_id"],
+                    revision=entry["revision"],
+                    filename=entry["filename"],
+                    local_dir=str(_local_dir_for(local_path, str(entry["filename"]))),
+                )
+                break
+            except _PERMANENT_DOWNLOAD_ERRORS:
+                raise
+            except Exception as exc:
+                if attempt + 1 == DOWNLOAD_ATTEMPTS:
+                    raise
+                delay = DOWNLOAD_BACKOFF_SECONDS[
+                    min(attempt, len(DOWNLOAD_BACKOFF_SECONDS) - 1)]
+                click.echo(
+                    f"download of {entry['filename']} failed ({exc}); "
+                    f"retrying in {delay}s "
+                    f"(attempt {attempt + 2}/{DOWNLOAD_ATTEMPTS})",
+                    err=True,
+                )
+                time.sleep(delay)
         click.echo(f"fetched {entry['filename']} @ {entry['revision'][:8]}")
 
 

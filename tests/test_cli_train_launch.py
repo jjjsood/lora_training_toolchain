@@ -220,3 +220,76 @@ def test_a_nested_weight_filename_lands_where_the_plan_says(tmp_path):
         local_path = root / filename
         assert _local_dir_for(local_path, filename) == root
         assert _local_dir_for(local_path, filename) / filename == local_path
+
+
+def _weight_entry(tmp_path):
+    return {"repo_id": "org/repo", "revision": "deadbeefcafe",
+            "filename": "sd3_medium.safetensors",
+            "local_path": str(tmp_path / "models" / "sd3_medium.safetensors")}
+
+
+def test_download_retries_transient_failures(tmp_path, monkeypatch):
+    """A DNS flake or CDN reset mid-download must not kill the run: the
+    download is resumable, so transient errors are retried with backoff."""
+    from lorafactory import cli as cli_mod
+
+    attempts = []
+
+    def flaky(**kwargs):
+        attempts.append(kwargs)
+        if len(attempts) < 3:
+            raise RuntimeError("error sending request")
+
+    slept = []
+    monkeypatch.setattr(cli_mod, "hf_hub_download", flaky)
+    monkeypatch.setattr(cli_mod.time, "sleep", slept.append)
+
+    cli_mod._download_weights([_weight_entry(tmp_path)])
+
+    assert len(attempts) == 3
+    assert slept == [5, 25]
+
+
+def test_download_gives_up_after_max_attempts(tmp_path, monkeypatch):
+    from lorafactory import cli as cli_mod
+
+    attempts = []
+
+    def always_down(**kwargs):
+        attempts.append(kwargs)
+        raise RuntimeError("error sending request")
+
+    monkeypatch.setattr(cli_mod, "hf_hub_download", always_down)
+    monkeypatch.setattr(cli_mod.time, "sleep", lambda s: None)
+
+    with pytest.raises(RuntimeError):
+        cli_mod._download_weights([_weight_entry(tmp_path)])
+
+    assert len(attempts) == cli_mod.DOWNLOAD_ATTEMPTS
+
+
+def test_download_never_retries_permanent_errors(tmp_path, monkeypatch):
+    """404/403-class answers mean the plan or token is wrong; retrying them
+    would only delay the real error by the whole backoff schedule."""
+    from types import SimpleNamespace
+
+    from huggingface_hub.errors import RepositoryNotFoundError
+
+    from lorafactory import cli as cli_mod
+
+    attempts = []
+    fake_response = SimpleNamespace(headers={}, status_code=404,
+                                    request=SimpleNamespace(url="u"))
+
+    def gone(**kwargs):
+        attempts.append(kwargs)
+        raise RepositoryNotFoundError("no such repo", response=fake_response)
+
+    monkeypatch.setattr(cli_mod, "hf_hub_download", gone)
+    monkeypatch.setattr(cli_mod.time, "sleep",
+                        lambda s: pytest.fail("must not sleep"))
+
+    with pytest.raises(RepositoryNotFoundError):
+        cli_mod._download_weights([_weight_entry(tmp_path)])
+
+    assert len(attempts) == 1
