@@ -20,7 +20,10 @@ COLUMNS = [
     "licence", "licence_url", "acquisition_date",
 ]
 
-NON_IMAGE_SUFFIXES = {".txt"}
+# .npz: kohya writes latent / text-encoder caches next to the images when
+# cache_*_to_disk is enabled (the default in configs/base.yaml); they are
+# derived artifacts, not dataset content, so the manifest ignores them.
+NON_IMAGE_SUFFIXES = {".txt", ".npz"}
 MANIFEST_FILENAME = "manifest.csv"
 
 

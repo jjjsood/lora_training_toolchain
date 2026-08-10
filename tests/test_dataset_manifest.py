@@ -54,6 +54,17 @@ def test_consistent_dataset_passes(tmp_path):
     assert len(r.manifest_hash) == 64
 
 
+def test_kohya_npz_caches_are_ignored(tmp_path):
+    h1 = write_image(tmp_path, "a.png", b"img-a")
+    # kohya writes latent / text-encoder caches next to the images when
+    # cache_*_to_disk is on; they must not count as unmanifested files.
+    (tmp_path / "a_1024x1024_sd3.npz").write_bytes(b"latents")
+    (tmp_path / "a_sd3_te.npz").write_bytes(b"te-cache")
+    write_manifest(tmp_path, [row("a.png", h1)])
+    r = check_dataset(tmp_path)
+    assert r.ok, r.errors
+
+
 def test_file_without_row_is_error(tmp_path):
     h1 = write_image(tmp_path, "a.png", b"img-a")
     write_image(tmp_path, "orphan.png", b"img-x")
