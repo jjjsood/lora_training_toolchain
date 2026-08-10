@@ -73,7 +73,9 @@ def build_train_command(engine: str, train_toml: Path, *,
     script_path = sdscripts_dir / script_name
 
     argv = [
-        kohya_python, "-m", "accelerate", "launch",
+        # `-m accelerate` does not work: accelerate ships no __main__.py, so
+        # the CLI entry must be addressed as accelerate.commands.launch.
+        kohya_python, "-m", "accelerate.commands.launch",
         *(accelerate_args or []),
         str(script_path),
         "--config_file", str(train_toml),
