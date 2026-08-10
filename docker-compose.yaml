@@ -77,3 +77,12 @@ services:
 
 volumes:
   models-cache:
+
+# huggingface.co resolves AAAA-first; on Docker's default IPv4-only bridge
+# every IPv6 attempt dies before falling back, which the Hugging Face xet
+# client surfaces as a mid-download "error sending request". Giving the
+# network real IPv6 (ULA + NAT66, auto-allocated by the engine) makes the
+# containers behave like the host instead of a degraded copy of it.
+networks:
+  default:
+    enable_ipv6: true
