@@ -1,0 +1,67 @@
+# T-SMOKE-LL — the 50-step stand-in for L-L, for validating the INSTRUMENT.
+#
+# Same band as configs/matrix/L-L.yaml (transformer blocks 16-23, attn + mlp,
+# rank 16), same dataset and seed, but the smoke budget: 50 steps instead of
+# 2000, and `budget_exempt` so it is never mistaken for a matrix arm.
+#
+# What it is FOR: prompt_attention_inspector's gate G3 asserts that gating a
+# known-early LoRA to blocks 0-7 reproduces the ungated output and gating it to
+# 16-23 reproduces base. That claim is structural — it follows from the adapter
+# carrying weights in one band only — so it can be exercised by an adapter that
+# is barely trained. Running it here first buys the instrument's verification
+# for ~50 steps instead of ~2000.
+#
+# What it is NOT for: nothing here may be cited as a result. A 50-step adapter
+# says nothing about whether a REAL LoRA's influence localizes; that is what
+# the matrix run answers. This file separates "does the gating machinery
+# measure what it claims" from "what does it measure", and only pays for the
+# first.
+#
+# The train section is repeated in full on purpose: loader.resolve() replaces a
+# declared section WHOLESALE (config/loader.py), it does not merge keys. Every
+# value below is byte-identical to configs/test/smoke.yaml.
+adapter_id: T-SMOKE-LL
+extends: ../base.yaml
+budget_exempt: true
+overrides_allowed: [target, train, dataset]
+
+target:
+  scope: transformer
+  blocks: [16, 23]
+  module_classes: [attn, mlp]
+  rank: 16
+  alpha: 16
+
+train:
+  seed: 20260808
+  max_train_steps: 50
+  learning_rate: 0.0001
+  train_batch_size: 1
+  optimizer_type: AdamW8bit
+  mixed_precision: bf16
+  save_precision: bf16
+  save_model_as: safetensors
+  gradient_checkpointing: true
+  cache_latents: true
+  cache_latents_to_disk: true
+  cache_text_encoder_outputs: true
+  cache_text_encoder_outputs_to_disk: true
+  max_data_loader_n_workers: 0
+  blocks_to_swap: 0
+  logging_dir: logs
+
+dataset:
+  name: STYLE
+  path: STYLE
+  manifest: STYLE/manifest.csv
+  resolution: 1024
+  source:
+    repo: huggan/few-shot-aurora
+    revision: ccf645535bc3b5f755d03567374780ae9473d66b
+    parquet: data/train-00000-of-00001.parquet
+    limit: 50
+    caption: a photograph in the sks_aurora style
+    author: unknown
+    licence: unknown
+    licence_url: https://huggingface.co/datasets/huggan/few-shot-aurora
+    acquisition_date: "2026-08-08"
