@@ -66,6 +66,33 @@ def test_te_only_adapter():
     assert not any(a.startswith("train_t5xxl") for a in s.network_args)
 
 
+def test_transformer_scope_trains_the_transformer_only():
+    """The mirror of the flag above, and it is not cosmetic.
+
+    kohya's default trains BOTH stacks, so a `scope: transformer` arm without
+    this flag silently also carries a text-encoder adapter — measured
+    2026-08-11 on a 50-step blocks-0-7 run: 96 transformer tensors plus 888
+    trained text-encoder ones. That confounds any placement claim, and it makes
+    the adapter impossible to switch off through the transformer, since
+    text-encoder LoRA layers run once inside `encode_prompt`.
+    """
+    for adapter_id in ("L-E", "L-L", "L-A"):
+        s = spec_for(adapter_id)
+        assert s.flags.get("network_train_unet_only") is True, adapter_id
+        assert "network_train_text_encoder_only" not in s.flags, adapter_id
+
+
+def test_the_two_scopes_never_claim_each_other_s_flag():
+    # Both flags set would be contradictory, and kohya resolves such a pair by
+    # precedence rather than by refusing — so the emitter must never produce it.
+    for adapter_id in ("L-E", "L-T", "F-F"):
+        flags = spec_for(adapter_id).flags
+        assert not (
+            flags.get("network_train_unet_only")
+            and flags.get("network_train_text_encoder_only")
+        ), adapter_id
+
+
 def test_flux_adapter():
     s = spec_for("F-F")
     assert s.network_module == "networks.lora_flux"

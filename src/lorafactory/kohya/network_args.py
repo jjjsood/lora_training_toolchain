@@ -163,5 +163,20 @@ def build_network_args(config: dict) -> NetworkSpec:
         network_dim=int(target["rank"]),
         network_alpha=int(target["alpha"]),
         network_args=args,
-        flags={},
+        # The mirror of `_te_only_spec`'s flag, and it has to be explicit:
+        # kohya's default trains BOTH the transformer and the text encoders, so
+        # omitting it made every `scope: transformer` arm carry a text-encoder
+        # adapter nobody asked for. Measured 2026-08-11 on a 50-step blocks-0-7
+        # run: 96 transformer tensors (the band, correct) plus 888 text-encoder
+        # tensors that were trained rather than left at init (max|B| 0.125 on
+        # the encoders vs 0.071 on the transformer).
+        #
+        # Two things break without it. A placement claim ("the effect comes
+        # from blocks 0-7") is confounded by a component no block range
+        # governs. And a downstream block-gating study cannot switch such an
+        # adapter off through the transformer at all: text-encoder LoRA layers
+        # run once inside `encode_prompt`, so zeroing every block still leaves
+        # them at full strength — which is exactly what
+        # prompt_attention_inspector's gate G3 asserts must NOT happen.
+        flags={"network_train_unet_only": True},
     )
