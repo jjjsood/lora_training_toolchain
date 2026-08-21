@@ -9,11 +9,13 @@ object every consumer downstream — emitter, runner, models, provenance —
 actually receives.
 """
 
+import warnings
+
 import pytest
 
 from conftest import ALL_MATRIX_IDS, CONFIGS, FALLBACK_IDS, MATRIX
 from lorafactory.config.loader import resolve
-from lorafactory.config.schema import ConfigSchemaError, validate
+from lorafactory.config.schema import ARCH_DEFAULTS, ConfigSchemaError, ModelSection, validate
 
 
 def test_every_matrix_config_validates():
@@ -49,20 +51,71 @@ def test_wrong_type_is_rejected():
         validate(data)
 
 
-def test_model_must_name_a_checkpoint_file():
+def test_model_without_arch_default_must_name_a_checkpoint_file():
+    """An arch with no ARCH_DEFAULTS entry still requires every model field —
+    only known archs (sd3, flux) get defaults."""
     data = dict(resolve(MATRIX / "L-F.yaml").data)
-    data["model"] = {k: v for k, v in data["model"].items() if k != "train_file"}
+    data["model"] = {
+        k: v for k, v in data["model"].items() if k != "train_file"
+    }
+    data["model"]["arch"] = "unknown-arch"
     with pytest.raises(ConfigSchemaError):
         validate(data)
 
 
-def test_revision_must_be_a_full_sha():
-    """A short or truncated revision resolves differently over time and
-    destroys the reproducibility claim the pins exist for."""
+def test_short_revision_still_validates_but_warns():
+    """Relaxed pattern accepts branch/tag-shaped strings; a non-pinned
+    revision is a warning, never a hard failure — see
+    docs/superpowers/specs/2026-08-22-config-dx-relaxation-design.md."""
     data = dict(resolve(MATRIX / "L-F.yaml").data)
-    data["model"] = {**data["model"], "train_revision": "19b7f51"}
-    with pytest.raises(ConfigSchemaError):
+    data["model"] = {**data["model"], "train_revision": "main"}
+    with pytest.warns(UserWarning, match="train_revision"):
         validate(data)
+
+
+def test_sha_revision_not_matching_the_verified_pin_warns():
+    data = dict(resolve(MATRIX / "L-F.yaml").data)
+    data["model"] = {
+        **data["model"],
+        "train_revision": "0" * 40,
+    }
+    with pytest.warns(UserWarning, match="does not match the verified pin"):
+        validate(data)
+
+
+def test_sd3_arch_default_fills_every_model_field():
+    filled = ModelSection.model_validate({"arch": "sd3"})
+    assert filled.train_repo == ARCH_DEFAULTS["sd3"]["train_repo"]
+    assert filled.train_revision == ARCH_DEFAULTS["sd3"]["train_revision"]
+    assert filled.train_file == ARCH_DEFAULTS["sd3"]["train_file"]
+    assert filled.eval_repo == ARCH_DEFAULTS["sd3"]["eval_repo"]
+    assert filled.eval_revision == ARCH_DEFAULTS["sd3"]["eval_revision"]
+    assert filled.text_encoders == ARCH_DEFAULTS["sd3"]["text_encoders"]
+
+
+def test_flux_arch_default_fills_every_model_field():
+    filled = ModelSection.model_validate({"arch": "flux"})
+    assert filled.train_repo == ARCH_DEFAULTS["flux"]["train_repo"]
+    assert filled.ae == ARCH_DEFAULTS["flux"]["ae"]
+    assert filled.text_encoders == ARCH_DEFAULTS["flux"]["text_encoders"]
+
+
+def test_explicit_model_fields_override_arch_defaults():
+    filled = ModelSection.model_validate({
+        "arch": "sd3",
+        "train_revision": "a" * 40,
+    })
+    assert filled.train_revision == "a" * 40
+    assert filled.train_repo == ARCH_DEFAULTS["sd3"]["train_repo"]
+
+
+def test_minimal_sd3_config_resolves_with_real_verified_pins():
+    """The DX case the whole task exists for: `model: {arch: sd3}` alone."""
+    data = dict(resolve(MATRIX / "L-F.yaml").data)
+    data["model"] = {"arch": "sd3"}
+    resolved = validate(data)
+    assert resolved.model.train_revision == "19b7f516efea082d257947e057e6f419e26fd497"
+    assert resolved.model.eval_revision == "ea42f8cef0f178587cf766dc8129abd379c90671"
 
 
 def test_target_block_range_is_bounds_checked():

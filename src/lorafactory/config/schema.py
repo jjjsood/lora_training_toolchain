@@ -17,7 +17,9 @@ legitimately differ per adapter (e.g. `fp8_base` only on the FLUX config).
 
 from __future__ import annotations
 
-from typing import Annotated
+import re
+import warnings
+from typing import Annotated, Literal
 
 from pydantic import (
     BaseModel,
@@ -37,9 +39,15 @@ from lorafactory.constants import (
     SD3_MAX_BLOCK_INDEX,
 )
 
-__all__ = ["ConfigSchemaError", "validate"]
+__all__ = ["ARCH_DEFAULTS", "ConfigSchemaError", "validate"]
 
 _SHA1_RE = r"^[0-9a-f]{40}$"
+_SHA1_ONLY = re.compile(_SHA1_RE)
+#: Relaxed: a full SHA, or anything branch/tag-shaped. Non-SHA values still
+#: work — see `_warn_unpinned_revisions` below, which flags them without
+#: blocking, preserving the reproducibility guarantee as a warning rather
+#: than turning it into friction for local/dev configs.
+_REVISION_RE = r"^[0-9a-f]{40}$|^[A-Za-z0-9_.\-/]+$"
 
 #: Highest transformer block index of SD3-Medium (24 blocks, 0-23). Kept as
 #: its own name — referenced from outside this module — but derived from the
@@ -50,7 +58,47 @@ MAX_BLOCK_INDEX = SD3_MAX_BLOCK_INDEX
 _BLOCKS_PAIR_LEN = 2
 
 PositiveInt = Annotated[StrictInt, Field(gt=0)]
-Revision = Annotated[StrictStr, Field(pattern=_SHA1_RE)]
+Revision = Annotated[StrictStr, Field(pattern=_REVISION_RE)]
+
+#: Known-good defaults per `model.arch`, copied from the real verified pins in
+#: configs/base.yaml, configs/matrix/F-F.yaml and tests/test_model_pins.py —
+#: this repo already keeps that trio in sync by hand; this is a fourth copy of
+#: the same convention, not a new one. Production code cannot import
+#: tests/test_model_pins.py, so this cannot literally share that dict.
+ARCH_DEFAULTS: dict[str, dict] = {
+    "sd3": {
+        "train_repo": "stabilityai/stable-diffusion-3-medium",
+        "train_revision": "19b7f516efea082d257947e057e6f419e26fd497",
+        "train_file": "sd3_medium.safetensors",
+        "eval_repo": "stabilityai/stable-diffusion-3-medium-diffusers",
+        "eval_revision": "ea42f8cef0f178587cf766dc8129abd379c90671",
+        "text_encoders": {
+            "clip_l": "text_encoders/clip_l.safetensors",
+            "clip_g": "text_encoders/clip_g.safetensors",
+            "t5xxl": "text_encoders/t5xxl_fp16.safetensors",
+        },
+    },
+    "flux": {
+        "train_repo": "black-forest-labs/FLUX.1-dev",
+        "train_revision": "3de623fc3c33e44ffbe2bad470d0f45bccf2eb21",
+        "train_file": "flux1-dev.safetensors",
+        "eval_repo": "black-forest-labs/FLUX.1-dev",
+        "eval_revision": "3de623fc3c33e44ffbe2bad470d0f45bccf2eb21",
+        "ae": "ae.safetensors",
+        "text_encoders": {
+            "clip_l": "text_encoders/clip_l.safetensors",
+            "t5xxl": "text_encoders/t5xxl_fp16.safetensors",
+        },
+    },
+}
+
+#: repo -> verified HEAD sha, derived from ARCH_DEFAULTS above. Used only to
+#: warn on drift, never to block — see `_warn_unpinned_revisions`.
+_VERIFIED_REVISIONS: dict[str, str] = {}
+for _arch_defaults in ARCH_DEFAULTS.values():
+    _VERIFIED_REVISIONS[_arch_defaults["train_repo"]] = _arch_defaults["train_revision"]
+    _VERIFIED_REVISIONS[_arch_defaults["eval_repo"]] = _arch_defaults["eval_revision"]
+del _arch_defaults
 
 
 class ConfigSchemaError(Exception):
@@ -66,14 +114,65 @@ class ModelSection(_Section):
     model_config = ConfigDict(extra="forbid", protected_namespaces=())
 
     arch: StrictStr
-    train_repo: StrictStr
-    train_revision: Revision
+    train_repo: StrictStr | None = None
+    train_revision: Revision | None = None
     #: kohya takes a FILE for --pretrained_model_name_or_path, never a repo id.
-    train_file: StrictStr
-    eval_repo: StrictStr
-    eval_revision: Revision
-    text_encoders: dict[StrictStr, StrictStr]
+    train_file: StrictStr | None = None
+    eval_repo: StrictStr | None = None
+    eval_revision: Revision | None = None
+    text_encoders: dict[StrictStr, StrictStr] | None = None
     ae: StrictStr | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _fill_arch_defaults(cls, data):
+        if not isinstance(data, dict):
+            return data
+        defaults = ARCH_DEFAULTS.get(data.get("arch"))
+        if not defaults:
+            return data
+        filled = dict(data)
+        for key, value in defaults.items():
+            filled.setdefault(key, value)
+        return filled
+
+    @model_validator(mode="after")
+    def _required_after_defaults(self) -> ModelSection:
+        """Fields with no ARCH_DEFAULTS entry for this arch are still required."""
+        for name in (
+            "train_repo", "train_revision", "train_file",
+            "eval_repo", "eval_revision", "text_encoders",
+        ):
+            if getattr(self, name) is None:
+                raise ValueError(
+                    f"model.{name} is required (no default for arch {self.arch!r})"
+                )
+        return self
+
+    @model_validator(mode="after")
+    def _warn_unpinned_revisions(self) -> ModelSection:
+        """Never blocks — see docs/superpowers/specs/2026-08-22-config-dx-relaxation-design.md."""
+        for repo_field, rev_field in (
+            ("train_repo", "train_revision"), ("eval_repo", "eval_revision"),
+        ):
+            repo, rev = getattr(self, repo_field), getattr(self, rev_field)
+            if repo is None or rev is None:
+                continue
+            if not _SHA1_ONLY.fullmatch(rev):
+                warnings.warn(
+                    f"model.{rev_field} {rev!r} is not a pinned commit SHA — "
+                    "reproducibility is not guaranteed for this run",
+                    stacklevel=2,
+                )
+                continue
+            expected = _VERIFIED_REVISIONS.get(repo)
+            if expected is not None and rev != expected:
+                warnings.warn(
+                    f"model.{rev_field} {rev!r} does not match the verified pin "
+                    f"for {repo} ({expected!r}) — reproducibility is not guaranteed",
+                    stacklevel=2,
+                )
+        return self
 
 
 class DatasetSourceSection(_Section):
