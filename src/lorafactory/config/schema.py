@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import re
 import warnings
-from typing import Annotated, Literal
+from typing import Annotated
 
 from pydantic import (
     BaseModel,

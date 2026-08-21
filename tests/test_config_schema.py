@@ -9,8 +9,6 @@ object every consumer downstream — emitter, runner, models, provenance —
 actually receives.
 """
 
-import warnings
-
 import pytest
 
 from conftest import ALL_MATRIX_IDS, CONFIGS, FALLBACK_IDS, MATRIX
@@ -101,10 +99,11 @@ def test_flux_arch_default_fills_every_model_field():
 
 
 def test_explicit_model_fields_override_arch_defaults():
-    filled = ModelSection.model_validate({
-        "arch": "sd3",
-        "train_revision": "a" * 40,
-    })
+    with pytest.warns(UserWarning, match="does not match the verified pin"):
+        filled = ModelSection.model_validate({
+            "arch": "sd3",
+            "train_revision": "a" * 40,
+        })
     assert filled.train_revision == "a" * 40
     assert filled.train_repo == ARCH_DEFAULTS["sd3"]["train_repo"]
 
