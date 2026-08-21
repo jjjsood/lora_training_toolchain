@@ -18,7 +18,7 @@ import yaml
 from conftest import CONFIGS
 from lorafactory.config.loader import resolve
 from lorafactory.config.schema import validate
-from lorafactory.data.fetch import DatasetSourceError, fetch_plan
+from lorafactory.data.fetch import DatasetSourceError, fetch_dataset, fetch_plan
 from lorafactory.data.manifest import COLUMNS
 
 TEST_CONFIGS = CONFIGS / "test"
@@ -94,3 +94,81 @@ def test_source_must_name_exactly_one_form():
     both["dataset"]["source"]["files"] = ["dataset/x/*.jpg"]
     with pytest.raises(DatasetSourceError, match="exactly one"):
         fetch_plan(both)
+
+
+def test_local_source_plan_globs_the_configured_directory(tmp_path):
+    (tmp_path / "img_0001.png").write_bytes(b"\x89PNG\r\n")
+    config = {
+        "dataset": {
+            "name": "STYLE", "path": "STYLE", "manifest": "STYLE/manifest.csv",
+            "resolution": 64,
+            "source": {
+                "type": "local", "path": str(tmp_path), "caption": "a photo",
+            },
+        },
+    }
+    plan = fetch_plan(config)
+    assert plan["form"] == "files"
+    assert plan["source"] == [f"{tmp_path}/*.png"]
+    assert plan["repo"] is None
+    assert plan["caption"] == "a photo"
+
+
+def test_local_source_fetch_copies_files_and_fills_sentinel_provenance(tmp_path, monkeypatch):
+    from PIL import Image
+
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    Image.new("RGB", (64, 64), "red").save(src_dir / "a.png")
+    Image.new("RGB", (64, 64), "blue").save(src_dir / "b.png")
+
+    datasets_dir = tmp_path / "datasets"
+    monkeypatch.setenv("LORAFACTORY_DATASETS_DIR", str(datasets_dir))
+
+    config = {
+        "dataset": {
+            "name": "STYLE", "path": "STYLE", "manifest": "STYLE/manifest.csv",
+            "resolution": 64,
+            "source": {
+                "type": "local", "path": str(src_dir), "caption": "a photo of sks_style",
+            },
+        },
+    }
+    report = fetch_dataset(config)
+    assert report.action == "fetched"
+    assert report.count == 2
+    assert report.ok, report.errors
+
+    from lorafactory.data.manifest import check_dataset
+    result = check_dataset(report.image_dir)
+    assert result.ok, result.errors
+
+
+def test_local_source_explicit_provenance_is_respected(tmp_path, monkeypatch):
+    from PIL import Image
+
+    src_dir = tmp_path / "src"
+    src_dir.mkdir()
+    Image.new("RGB", (64, 64), "red").save(src_dir / "a.png")
+
+    datasets_dir = tmp_path / "datasets"
+    monkeypatch.setenv("LORAFACTORY_DATASETS_DIR", str(datasets_dir))
+
+    config = {
+        "dataset": {
+            "name": "STYLE", "path": "STYLE", "manifest": "STYLE/manifest.csv",
+            "resolution": 64,
+            "source": {
+                "type": "local", "path": str(src_dir), "caption": "x",
+                "author": "Jane Doe", "licence": "CC0",
+            },
+        },
+    }
+    report = fetch_dataset(config)
+    import csv
+    with open(report.image_dir / "manifest.csv", newline="") as f:
+        row = next(csv.DictReader(f))
+    assert row["author"] == "Jane Doe"
+    assert row["licence"] == "CC0"
+    assert row["licence_url"] == "local"
+    assert row["acquisition_date"] == "unknown"

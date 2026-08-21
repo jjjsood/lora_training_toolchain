@@ -45,6 +45,13 @@ IMAGE_SUFFIX = ".png"
 CAPTION_SUFFIX = ".txt"
 _MANAGED_NAME = re.compile(r"^img_\d{4}(\.png|\.txt)$")
 
+_LOCAL_PROVENANCE_DEFAULTS = {
+    "author": "local",
+    "licence": "unspecified",
+    "licence_url": "local",
+    "acquisition_date": "unknown",
+}
+
 
 class DatasetSourceError(Exception):
     """A config cannot be turned into a dataset fetch."""
@@ -78,15 +85,40 @@ def _source(config: dict) -> dict:
 
 
 def fetch_plan(config: dict) -> dict:
-    """What `fetch_dataset` would download for `config`. Pure — nothing is read.
+    """What `fetch_dataset` would download/copy for `config`. Pure — nothing is read.
 
-    File sources are reported as the *patterns* the config names, not as
-    resolved filenames: expanding them means listing the repo, which is network.
+    File sources (remote or local) are reported as the *patterns* the config
+    names, not as resolved filenames: expanding them means listing the repo
+    (network) or the directory — deferred to `fetch_dataset`.
     """
     source = _source(config)
     paths = resolve_dataset_paths(config)
+    is_local = source.get("type") == "local"
 
-    for required in ("repo", "revision", "caption"):
+    if not source.get("caption"):
+        raise DatasetSourceError("dataset.source has no 'caption'")
+
+    if is_local:
+        if not source.get("path"):
+            raise DatasetSourceError("dataset.source has no 'path'")
+        files = source.get("files") or [f"{source['path']}/*.png"]
+        return {
+            "repo": None,
+            "revision": None,
+            "form": "files",
+            "source": files,
+            "limit": source.get("limit"),
+            "resolution": _dataset(config).get("resolution"),
+            "image_dir": paths.image_dir,
+            "manifest": paths.image_dir / MANIFEST_FILENAME,
+            "caption": source["caption"],
+            "provenance": {
+                key: source.get(key) or default
+                for key, default in _LOCAL_PROVENANCE_DEFAULTS.items()
+            },
+        }
+
+    for required in ("repo", "revision"):
         if not source.get(required):
             raise DatasetSourceError(f"dataset.source has no '{required}'")
 
@@ -175,6 +207,23 @@ def _file_images(repo: str, revision: str, patterns: list[str], limit: int | Non
         yield name, Path(local).read_bytes()
 
 
+def _local_file_images(patterns: list[str], limit: int | None):
+    """(local path, image_bytes) pairs in sorted-path order, one dir per pattern's parent."""
+    seen: set[Path] = set()
+    for pattern in patterns:
+        base = Path(pattern).parent
+        for candidate in sorted(base.glob(Path(pattern).name)):
+            if candidate.is_file():
+                seen.add(candidate)
+    names = sorted(seen)
+    if not names:
+        raise DatasetSourceError(f"no local file matches {patterns}")
+    if limit is not None:
+        names = names[:limit]
+    for path in names:
+        yield str(path), path.read_bytes()
+
+
 def _image_count(image_dir: Path) -> int:
     return sum(1 for p in image_dir.iterdir() if p.suffix == IMAGE_SUFFIX)
 
@@ -215,11 +264,18 @@ def fetch_dataset(config: dict, force: bool = False) -> FetchReport:
     _clear_managed(image_dir)
 
     is_parquet = plan["form"] == "parquet"
-    reader = _parquet_images if is_parquet else _file_images
-    items = reader(plan["repo"], plan["revision"], plan["source"], plan["limit"])
+    is_local = plan["repo"] is None
+    if is_local:
+        reader = _local_file_images
+        items = reader(plan["source"], plan["limit"])
+    else:
+        reader = _parquet_images if is_parquet else _file_images
+        items = reader(plan["repo"], plan["revision"], plan["source"], plan["limit"])
 
     def source_url(key) -> str:
-        """`key` is a parquet row index or, for file sources, a repo path."""
+        """`key` is a parquet row index, a repo path, or (local) a filesystem path."""
+        if is_local:
+            return str(key)
         if is_parquet:
             return _blob_url(plan["repo"], plan["revision"], plan["source"], row=key)
         return _blob_url(plan["repo"], plan["revision"], key)
