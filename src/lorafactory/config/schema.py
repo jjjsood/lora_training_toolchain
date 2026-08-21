@@ -434,9 +434,35 @@ class ResolvedConfigModel(BaseModel):
         return self
 
 
+_ERROR_HINTS = {
+    "missing": "provide a value",
+    "string_pattern_mismatch": "check the expected format",
+    "string_type": "expected a string",
+    "int_type": "expected an integer",
+    "int_parsing": "expected an integer",
+    "float_parsing": "expected a number",
+    "bool_type": "expected true or false",
+    "extra_forbidden": "remove this key, or check for a typo",
+    "literal_error": "check the allowed values",
+}
+
+
+def _format_validation_error(exc: ValidationError) -> str:
+    """One line per Pydantic error: `<field.path>: <message> (<hint>)`."""
+    lines = []
+    for err in exc.errors():
+        loc = ".".join(str(part) for part in err["loc"]) or "<root>"
+        hint = _ERROR_HINTS.get(err["type"])
+        line = f"{loc}: {err['msg']}"
+        if hint:
+            line += f" ({hint})"
+        lines.append(line)
+    return "\n".join(lines)
+
+
 def validate(resolved: dict) -> ResolvedConfigModel:
     """Validate a resolved config dict, raising ConfigSchemaError on any error."""
     try:
         return ResolvedConfigModel.model_validate(resolved)
     except ValidationError as exc:
-        raise ConfigSchemaError(str(exc)) from exc
+        raise ConfigSchemaError(_format_validation_error(exc)) from exc

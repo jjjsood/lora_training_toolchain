@@ -334,3 +334,15 @@ def test_dataset_section_explicit_manifest_is_respected():
         "name": "STYLE", "path": "STYLE", "manifest": "elsewhere/m.csv",
     })
     assert section.manifest == "elsewhere/m.csv"
+
+
+def test_config_schema_error_is_one_line_per_field():
+    data = dict(resolve(MATRIX / "L-F.yaml").data)
+    del data["train"]["max_train_steps"]
+    del data["train"]["seed"]
+    with pytest.raises(ConfigSchemaError) as excinfo:
+        validate(data)
+    message = str(excinfo.value)
+    assert "train.max_train_steps" in message
+    assert "train.seed" in message
+    assert "For further information visit" not in message  # pydantic's own footer

@@ -1,6 +1,6 @@
 """CLI surface: click group `lorafactory` (pyproject `project.scripts`).
 
-Subcommands: resolve-config, check-budget, check-dataset,
+Subcommands: resolve-config, validate-config, check-budget, check-dataset,
 emit-kohya, train, train-matrix, convert, verify-keys, gen-gate-images, gate, synth,
 introspect, screen, fetch-models, determinism-check, provenance. Plus two that exist only to
 make a first real run reproducible from a checkout: `fetch-dataset` (materialise a
@@ -178,6 +178,14 @@ def resolve_config(config_path: Path):
     rc = _resolve_config(config_path)
     click.echo(f"sha256: {rc.sha256}")
     click.echo(json.dumps(rc.data, indent=2, sort_keys=True))
+
+
+@cli.command("validate-config")
+@click.argument("config_path", type=click.Path(exists=True, path_type=Path))
+def validate_config(config_path: Path):
+    """Resolve and validate a config, printing human-readable errors on failure."""
+    _resolve_config(config_path)
+    click.echo(f"{config_path}: OK")
 
 
 @cli.command("check-budget")
