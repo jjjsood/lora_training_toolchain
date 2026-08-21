@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import re
 import warnings
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import (
     BaseModel,
@@ -175,16 +175,15 @@ class ModelSection(_Section):
         return self
 
 
-class DatasetSourceSection(_Section):
-    """Where the images come from, pinned hard enough to be re-fetchable.
+class RemoteDatasetSource(_Section):
+    """A dataset pinned hard enough to be re-fetched from Hugging Face.
 
-    Optional and only present on the test configs: the matrix configs describe
-    data that was acquired by hand and is documented in datasets/README.md.
-    When it *is* present, `fetch-dataset` can rebuild the directory byte-for-byte
-    from `repo` @ `revision`, and the licence fields below are what lands in the
+    `fetch-dataset` can rebuild the directory byte-for-byte from `repo` @
+    `revision`, and the licence fields below are what lands in the
     manifest's provenance columns — which is why none of them may be empty.
     """
 
+    type: Literal["remote", "hf"] = "remote"
     repo: StrictStr
     #: A dataset repo commit sha, same 40-hex rule as the model pins: an
     #: unpinned pull would silently change the images an adapter was trained on.
@@ -210,19 +209,87 @@ class DatasetSourceSection(_Section):
         return v
 
     @model_validator(mode="after")
-    def _exactly_one_source_form(self) -> DatasetSourceSection:
+    def _exactly_one_source_form(self) -> RemoteDatasetSource:
         if bool(self.parquet) == bool(self.files):
             raise ValueError("give exactly one of 'parquet' or 'files'")
         return self
+
+
+class LocalDatasetSource(_Section):
+    """A dataset that already lives on disk — no HF metadata required.
+
+    `fetch-dataset` stages it the same way it stages an HF repo: it copies
+    the files matching `files` (default every `.png` directly under `path`)
+    into the dataset's image directory.
+    """
+
+    type: Literal["local"] = "local"
+    path: StrictStr
+    files: list[StrictStr] | None = None
+    limit: PositiveInt | None = None
+    caption: StrictStr
+    #: Unlike RemoteDatasetSource, all optional: local data has no HF-style
+    #: provenance, so `data/fetch.py` fills non-empty sentinels when absent
+    #: rather than forcing the user to invent metadata that doesn't exist.
+    author: StrictStr | None = None
+    licence: StrictStr | None = None
+    licence_url: StrictStr | None = None
+    acquisition_date: StrictStr | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _default_files_glob(cls, data):
+        if not isinstance(data, dict):
+            return data
+        if not data.get("files") and data.get("path"):
+            data = dict(data)
+            data["files"] = [f"{data['path']}/*.png"]
+        return data
+
+    @field_validator("files")
+    @classmethod
+    def _files_not_empty(cls, v: list[str] | None) -> list[str] | None:
+        if v is not None and not v:
+            raise ValueError("files must not be an empty list")
+        return v
+
+
+#: Discriminated on `type`: a `local` source needs only a path; a `remote`
+#: (or legacy-spelled `hf`) source keeps the full HF metadata contract.
+DatasetSourceSection = Annotated[
+    LocalDatasetSource | RemoteDatasetSource, Field(discriminator="type")
+]
 
 
 class DatasetSection(_Section):
     name: StrictStr
     path: StrictStr
     manifest: StrictStr
-    resolution: PositiveInt
-    #: Absent on the matrix configs; see DatasetSourceSection.
+    resolution: PositiveInt = 1024
+    #: Absent on the matrix configs; see LocalDatasetSource/RemoteDatasetSource.
     source: DatasetSourceSection | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _default_manifest(cls, data):
+        if not isinstance(data, dict):
+            return data
+        if data.get("manifest") or not data.get("path"):
+            return data
+        data = dict(data)
+        data["manifest"] = f"{data['path']}/manifest.csv"
+        return data
+
+    @field_validator("source", mode="before")
+    @classmethod
+    def _infer_source_type(cls, v):
+        """A `source` with no `type` but a `repo` is the pre-existing remote
+        shape (backward compat); otherwise it's a local source."""
+        if not isinstance(v, dict) or "type" in v:
+            return v
+        v = dict(v)
+        v["type"] = "remote" if v.get("repo") else "local"
+        return v
 
 
 class TrainSection(BaseModel):

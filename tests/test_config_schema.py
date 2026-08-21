@@ -17,8 +17,11 @@ from lorafactory.config.loader import resolve
 from lorafactory.config.schema import (
     ARCH_DEFAULTS,
     ConfigSchemaError,
+    DatasetSection,
     DeterminismSection,
+    LocalDatasetSource,
     ModelSection,
+    RemoteDatasetSource,
     TrainSection,
     validate,
 )
@@ -269,3 +272,65 @@ def test_train_section_optional_fields_default():
 def test_train_section_still_requires_run_specific_fields():
     with pytest.raises(ValidationError):
         TrainSection.model_validate({"seed": 1})
+
+
+def test_local_dataset_source_needs_only_path():
+    source = LocalDatasetSource.model_validate({
+        "path": "STYLE", "caption": "a photo of sks_style",
+    })
+    assert source.type == "local"
+    assert source.files == ["STYLE/*.png"]
+    assert source.author is None
+
+
+def test_local_dataset_source_files_override_the_default_glob():
+    source = LocalDatasetSource.model_validate({
+        "path": "STYLE", "caption": "x", "files": ["STYLE/*.jpg"],
+    })
+    assert source.files == ["STYLE/*.jpg"]
+
+
+def test_remote_dataset_source_unchanged_behavior():
+    with pytest.raises(ValidationError):
+        RemoteDatasetSource.model_validate({"path": "STYLE"})  # no repo/revision/etc
+
+
+def test_dataset_source_without_type_and_with_repo_infers_remote():
+    section = DatasetSection.model_validate({
+        "name": "STYLE", "path": "STYLE", "manifest": "STYLE/manifest.csv",
+        "source": {
+            "repo": "huggan/few-shot-aurora",
+            "revision": "ccf645535bc3b5f755d03567374780ae9473d66b",
+            "parquet": "data/train-00000-of-00001.parquet",
+            "caption": "x", "author": "unknown", "licence": "unknown",
+            "licence_url": "https://example.com", "acquisition_date": "2026-08-08",
+        },
+    })
+    assert isinstance(section.source, RemoteDatasetSource)
+
+
+def test_dataset_source_without_type_and_without_repo_infers_local():
+    section = DatasetSection.model_validate({
+        "name": "STYLE", "path": "STYLE", "manifest": "STYLE/manifest.csv",
+        "source": {"path": "STYLE", "caption": "x"},
+    })
+    assert isinstance(section.source, LocalDatasetSource)
+
+
+def test_dataset_section_resolution_defaults_to_1024():
+    section = DatasetSection.model_validate({
+        "name": "STYLE", "path": "STYLE", "manifest": "STYLE/manifest.csv",
+    })
+    assert section.resolution == 1024
+
+
+def test_dataset_section_manifest_defaults_from_path():
+    section = DatasetSection.model_validate({"name": "STYLE", "path": "STYLE"})
+    assert section.manifest == "STYLE/manifest.csv"
+
+
+def test_dataset_section_explicit_manifest_is_respected():
+    section = DatasetSection.model_validate({
+        "name": "STYLE", "path": "STYLE", "manifest": "elsewhere/m.csv",
+    })
+    assert section.manifest == "elsewhere/m.csv"
