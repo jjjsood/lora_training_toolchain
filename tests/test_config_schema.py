@@ -10,6 +10,7 @@ actually receives.
 """
 
 import pytest
+from pydantic import ValidationError
 
 from conftest import ALL_MATRIX_IDS, CONFIGS, FALLBACK_IDS, MATRIX
 from lorafactory.config.loader import resolve
@@ -18,6 +19,7 @@ from lorafactory.config.schema import (
     ConfigSchemaError,
     DeterminismSection,
     ModelSection,
+    TrainSection,
     validate,
 )
 
@@ -250,3 +252,20 @@ def test_determinism_section_explicit_values_are_respected():
     assert section.cublas_workspace_config == ":16:8"
     assert section.pythonhashseed == "7"
     assert section.deterministic_algorithms is False
+
+
+def test_train_section_optional_fields_default():
+    section = TrainSection.model_validate({
+        "seed": 1, "max_train_steps": 10,
+        "learning_rate": 0.0001, "train_batch_size": 1,
+        "mixed_precision": "bf16", "save_precision": "bf16",
+    })
+    assert section.optimizer_type == "AdamW8bit"
+    assert section.save_model_as == "safetensors"
+    assert section.gradient_checkpointing is True
+    assert section.logging_dir == "logs"
+
+
+def test_train_section_still_requires_run_specific_fields():
+    with pytest.raises(ValidationError):
+        TrainSection.model_validate({"seed": 1})

@@ -234,12 +234,12 @@ class TrainSection(BaseModel):
     max_train_steps: PositiveInt
     learning_rate: float
     train_batch_size: PositiveInt
-    optimizer_type: StrictStr
+    optimizer_type: StrictStr = "AdamW8bit"
     mixed_precision: StrictStr
     save_precision: StrictStr
-    save_model_as: StrictStr
-    gradient_checkpointing: StrictBool
-    logging_dir: StrictStr
+    save_model_as: StrictStr = "safetensors"
+    gradient_checkpointing: StrictBool = True
+    logging_dir: StrictStr = "logs"
 
     @field_validator("learning_rate")
     @classmethod
