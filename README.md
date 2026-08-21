@@ -203,6 +203,87 @@ target:
 
 `L-E` may override `target`. It may not override `train`. `check-budget` diffs all resolved configs and fails on any section that differs between two members without both declaring it overridable — so "identical data, steps, LR, batch size and seed" is a check, not a claim. Every resolved config is hashed (SHA-256 over canonical JSON), and the hash gates run reuse.
 
+Arch defaults mean a from-scratch config needs almost nothing — `model.arch: sd3` (or `flux`) fills in the pinned checkpoint repo/revision/file and text encoders from the same verified pins `tests/test_model_pins.py` checks:
+
+<!-- lorafactory-example: minimal-base.yaml -->
+```yaml
+overrides_allowed: [model, dataset, train, target, determinism]
+model:
+  arch: sd3
+dataset:
+  name: STYLE
+  path: STYLE
+train:
+  seed: 20260808
+  max_train_steps: 50
+  learning_rate: 0.0001
+  train_batch_size: 1
+  mixed_precision: bf16
+  save_precision: bf16
+target:
+  scope: transformer
+  blocks: [0, 23]
+  module_classes: [attn, mlp]
+  rank: 16
+  alpha: 16
+determinism: {}
+```
+
+`overrides_allowed` is still required even on a config with nothing to extend — `resolve()` checks every top-level section a config supplies against it regardless of whether `extends` is present, so it must list every section this file provides. (A config that *does* extend `../base.yaml`, like every real matrix config, would list only the sections it changes — this one lists all of them because it stands alone.)
+
+Every field left out above has a default (`dataset.resolution` → `1024`, `dataset.manifest` → `<path>/manifest.csv`, `determinism.*` → the required-reproducible values, `train.optimizer_type`/`save_model_as`/`gradient_checkpointing`/`logging_dir` → this repo's actual defaults). Anything the matched-budget matrix actually cares about — `train.seed`/`max_train_steps`/`learning_rate`/`train_batch_size`, `model.arch`, `target` — still has no default and must be stated, because those are exactly the values `check-budget` compares across the matrix.
+
+A revision doesn't have to be a commit SHA — a branch or tag name validates too — but only a 40-character SHA that matches the pin `tests/test_model_pins.py` verifies is a reproducibility claim. Anything else (a branch name, or a SHA that doesn't match) still trains; `resolve-config`/`validate-config` print a warning to say so, they don't fail.
+
+### Local datasets vs. remote datasets
+
+`dataset.source` is optional — every matrix config omits it entirely, because that data was acquired by hand (see `datasets/README.md`) and isn't meant to be re-fetched. `fetch-dataset`/`test-run` need it only when a dataset should be (re)built from somewhere:
+
+<!-- lorafactory-example: local-dataset.yaml -->
+```yaml
+overrides_allowed: [model, dataset, train, target, determinism]
+model:
+  arch: sd3
+dataset:
+  name: STYLE
+  path: STYLE
+  source:
+    type: local
+    path: /data/raw/STYLE
+    caption: a photo in the sks_style style
+train:
+  seed: 1
+  max_train_steps: 10
+  learning_rate: 0.0001
+  train_batch_size: 1
+  mixed_precision: bf16
+  save_precision: bf16
+target:
+  scope: transformer
+  blocks: [0, 23]
+  module_classes: [attn, mlp]
+  rank: 16
+  alpha: 16
+determinism: {}
+```
+
+A local source needs only `path` (`files` defaults to every `.png` directly under it) and `caption` — no HF `repo`/`revision`/licence metadata. `fetch-dataset` copies the matched files in; the manifest it writes fills `author`/`licence`/`licence_url`/`acquisition_date` with non-empty placeholders (`"local"`/`"unspecified"`/`"local"`/`"unknown"`) when the config doesn't give them, since `check-dataset` still requires every provenance column non-empty.
+
+A remote source names the full Hugging Face metadata instead — `type: remote` (or `hf`; also the default when `type` is omitted and `repo` is present, for configs written before this option existed):
+
+```yaml
+source:
+  type: remote
+  repo: huggan/few-shot-aurora
+  revision: ccf645535bc3b5f755d03567374780ae9473d66b
+  parquet: data/train-00000-of-00001.parquet
+  caption: a photograph in the sks_aurora style
+  author: unknown
+  licence: unknown
+  licence_url: https://huggingface.co/datasets/huggan/few-shot-aurora
+  acquisition_date: "2026-08-08"
+```
+
 Paths resolve against environment roots, so the same config works in the container and on a host checkout:
 
 | Variable | Default | Meaning |
@@ -346,6 +427,8 @@ Docker with the NVIDIA Container Toolkit (`--gpus all` must work) for anything t
 
 **SD3-Medium** and **FLUX.1-dev** are gated on Hugging Face: accept the licence, set `HF_TOKEN`. Revisions are pinned to commit SHAs and held by `tests/test_model_pins.py`, so they cannot drift back into plausible-looking but invented hashes. sd-scripts reads the SAI single-file layout, not the `-diffusers` repos — both are pinned, since conversion and eval need the diffusers one.
 
+`model.train_revision`/`model.eval_revision` also accept a branch or tag name, not only a full SHA — see [Configs](#configs) — but only the pinned SHA is a reproducibility claim; anything else warns rather than blocks.
+
 ### Data
 
 The STYLE and OBJ image sets **do not exist yet** and are the blocking item. The contract they must satisfy is in [`datasets/README.md`](datasets/README.md). Each image needs a `manifest.csv` row with `file, sha256, caption, source_url, author, licence, licence_url, acquisition_date` — every field non-empty, checked against disk before training. A file on disk with no manifest row is an error.
@@ -356,6 +439,8 @@ The STYLE and OBJ image sets **do not exist yet** and are the blocking item. The
 ### Determinism
 
 `CUBLAS_WORKSPACE_CONFIG=:4096:8`, `PYTHONHASHSEED=0`, `max_data_loader_n_workers: 0` (workers reintroduce ordering nondeterminism), and one seed governing init, data order and noise. `determinism-check` compares two checkpoints tensor-exactly.
+
+`determinism.pythonhashseed` accepts either `"0"` or `0` (the integer coerces to the string automatically); all three `determinism.*` fields default to the values above if the section is omitted or left partly empty.
 
 ---
 
@@ -405,6 +490,12 @@ uv sync
 uv run pytest -q        # 346 tests, CPU-only, no network, no weights
 uv run ruff check .
 uv run ruff format --check .
+```
+
+**Troubleshooting a config.** `lorafactory validate-config <path>` resolves and validates a config on its own, printing one line per problem (`section.field: message`) instead of a raw Pydantic traceback:
+
+```bash
+uv run lorafactory validate-config configs/matrix/L-F.yaml
 ```
 
 The suite never builds the image and never downloads weights. Ruff runs `E, F, I, UP, B, PL` at line length 100 — the default `E4/E7/E9/F` set silently skips line length, import order and the pyupgrade/pylint findings.
