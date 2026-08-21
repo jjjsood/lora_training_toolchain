@@ -285,9 +285,16 @@ class TargetSection(_Section):
 
 
 class DeterminismSection(_Section):
-    cublas_workspace_config: StrictStr
-    pythonhashseed: StrictStr
-    deterministic_algorithms: StrictBool
+    cublas_workspace_config: StrictStr = ":4096:8"
+    pythonhashseed: StrictStr = "0"
+    deterministic_algorithms: StrictBool = True
+
+    @field_validator("pythonhashseed", mode="before")
+    @classmethod
+    def _coerce_pythonhashseed(cls, v):
+        if isinstance(v, int):
+            return str(v)
+        return v
 
 
 class ResolvedConfigModel(BaseModel):

@@ -13,7 +13,13 @@ import pytest
 
 from conftest import ALL_MATRIX_IDS, CONFIGS, FALLBACK_IDS, MATRIX
 from lorafactory.config.loader import resolve
-from lorafactory.config.schema import ARCH_DEFAULTS, ConfigSchemaError, ModelSection, validate
+from lorafactory.config.schema import (
+    ARCH_DEFAULTS,
+    ConfigSchemaError,
+    DeterminismSection,
+    ModelSection,
+    validate,
+)
 
 
 def test_every_matrix_config_validates():
@@ -221,3 +227,26 @@ def test_sd3_block_edge_24_still_fails():
     data["target"] = {**data["target"], "blocks": [0, 24]}
     with pytest.raises(ConfigSchemaError):
         validate(data)
+
+
+def test_determinism_section_all_fields_default():
+    section = DeterminismSection.model_validate({})
+    assert section.cublas_workspace_config == ":4096:8"
+    assert section.pythonhashseed == "0"
+    assert section.deterministic_algorithms is True
+
+
+def test_pythonhashseed_int_zero_coerces_to_string():
+    section = DeterminismSection.model_validate({"pythonhashseed": 0})
+    assert section.pythonhashseed == "0"
+
+
+def test_determinism_section_explicit_values_are_respected():
+    section = DeterminismSection.model_validate({
+        "cublas_workspace_config": ":16:8",
+        "pythonhashseed": 7,
+        "deterministic_algorithms": False,
+    })
+    assert section.cublas_workspace_config == ":16:8"
+    assert section.pythonhashseed == "7"
+    assert section.deterministic_algorithms is False
