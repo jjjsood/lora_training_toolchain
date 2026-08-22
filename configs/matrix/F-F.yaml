@@ -36,9 +36,9 @@ train:
   save_model_as: safetensors
   gradient_checkpointing: true
   cache_latents: true
-  cache_latents_to_disk: true
+  cache_latents_to_disk: false
   cache_text_encoder_outputs: true
-  cache_text_encoder_outputs_to_disk: true
+  cache_text_encoder_outputs_to_disk: false
   max_data_loader_n_workers: 0
   blocks_to_swap: 16
   fp8_base: true

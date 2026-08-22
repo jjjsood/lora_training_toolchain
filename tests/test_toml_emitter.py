@@ -46,9 +46,9 @@ def test_determinism_and_cache_keys(tmp_path):
     train, _ = emit_for("L-E", tmp_path)
     assert train["max_data_loader_n_workers"] == 0
     assert train["cache_latents"] is True
-    assert train["cache_latents_to_disk"] is True
+    assert train["cache_latents_to_disk"] is False
     assert train["cache_text_encoder_outputs"] is True
-    assert train["cache_text_encoder_outputs_to_disk"] is True
+    assert train["cache_text_encoder_outputs_to_disk"] is False
     assert isinstance(train["seed"], int)
     assert train["gradient_checkpointing"] is True
     assert train["mixed_precision"] == "bf16"
