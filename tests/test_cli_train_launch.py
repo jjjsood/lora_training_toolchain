@@ -289,7 +289,9 @@ def test_download_never_retries_permanent_errors(tmp_path, monkeypatch):
     monkeypatch.setattr(cli_mod.time, "sleep",
                         lambda s: pytest.fail("must not sleep"))
 
-    with pytest.raises(RepositoryNotFoundError):
+    with pytest.raises(cli_mod.ModelDownloadError) as excinfo:
         cli_mod._download_weights([_weight_entry(tmp_path)])
 
+    assert isinstance(excinfo.value.__cause__, RepositoryNotFoundError)
+    assert "HF_TOKEN" in str(excinfo.value)
     assert len(attempts) == 1

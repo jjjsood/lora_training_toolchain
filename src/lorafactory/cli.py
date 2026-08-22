@@ -536,7 +536,10 @@ def fetch_models(config_path: Path, dry_run: bool):
         _echo_json({"adapter_id": _adapter_id(rc.data, config_path), "files": files})
         return
 
-    _download_weights(files)
+    try:
+        _download_weights(files)
+    except ModelDownloadError as exc:
+        raise click.ClickException(str(exc)) from exc
 
 
 def _local_dir_for(local_path: Path, filename: str) -> Path:
@@ -564,6 +567,26 @@ _PERMANENT_DOWNLOAD_ERRORS = (
     EntryNotFoundError, GatedRepoError, RepositoryNotFoundError,
 )
 
+#: One-line diagnosis per permanent error, since the exception's own message
+#: is an HTTP status line that means nothing to someone authoring a config.
+_DOWNLOAD_ERROR_HINTS = {
+    GatedRepoError: "the repo is gated — accept its licence on huggingface.co and set HF_TOKEN",
+    RepositoryNotFoundError: "the repo id is wrong, or HF_TOKEN lacks access to it",
+    EntryNotFoundError: "the filename or commit SHA doesn't exist in that repo at that revision",
+}
+
+
+class ModelDownloadError(Exception):
+    """A weight download failed for a reason retrying cannot fix."""
+
+
+def _diagnose_download_error(entry: dict, exc: Exception) -> ModelDownloadError:
+    hint = _DOWNLOAD_ERROR_HINTS.get(type(exc), "check HF_TOKEN, repo id, revision and filename")
+    return ModelDownloadError(
+        f"{entry['repo_id']}@{entry['revision'][:8]} {entry['filename']}: "
+        f"{exc.__class__.__name__} ({hint})"
+    )
+
 
 def _download_weights(files: list[dict]) -> None:
     """Pull every entry of a `download_plan` to its resolved local path."""
@@ -579,8 +602,8 @@ def _download_weights(files: list[dict]) -> None:
                     local_dir=str(_local_dir_for(local_path, str(entry["filename"]))),
                 )
                 break
-            except _PERMANENT_DOWNLOAD_ERRORS:
-                raise
+            except _PERMANENT_DOWNLOAD_ERRORS as exc:
+                raise _diagnose_download_error(entry, exc) from exc
             except Exception as exc:
                 if attempt + 1 == DOWNLOAD_ATTEMPTS:
                     raise

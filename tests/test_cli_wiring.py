@@ -454,6 +454,41 @@ def test_fetch_models_dry_run_names_files_and_revisions(tmp_path, monkeypatch):
         assert entry["repo_id"], entry
 
 
+def test_fetch_models_gated_repo_gives_a_clean_diagnosis_not_a_traceback(tmp_path, monkeypatch):
+    import httpx
+    from huggingface_hub.errors import GatedRepoError
+
+    fake_model_root(tmp_path, monkeypatch)
+    response = httpx.Response(403, request=httpx.Request("GET", "https://huggingface.co"))
+
+    def _raise_gated(**kwargs):
+        raise GatedRepoError("403 Client Error", response=response)
+
+    monkeypatch.setattr("lorafactory.cli.hf_hub_download", _raise_gated)
+    result = run("fetch-models", "--config", str(MATRIX / "L-F.yaml"))
+
+    assert result.exit_code != 0
+    assert "Traceback" not in result.output
+    assert "gated" in result.output.lower()
+    assert "HF_TOKEN" in result.output
+
+
+def test_fetch_models_missing_file_gives_a_clean_diagnosis(tmp_path, monkeypatch):
+    from huggingface_hub.errors import EntryNotFoundError
+
+    fake_model_root(tmp_path, monkeypatch)
+
+    def _raise_missing(**kwargs):
+        raise EntryNotFoundError("404 Client Error")
+
+    monkeypatch.setattr("lorafactory.cli.hf_hub_download", _raise_missing)
+    result = run("fetch-models", "--config", str(MATRIX / "L-F.yaml"))
+
+    assert result.exit_code != 0
+    assert "Traceback" not in result.output
+    assert "filename" in result.output.lower() or "commit" in result.output.lower()
+
+
 def test_gen_gate_images_dry_run_plans_the_full_grid(tmp_path, monkeypatch):
     fake_model_root(tmp_path, monkeypatch)
     ckpt = tmp_path / "adapter.safetensors"
