@@ -17,8 +17,6 @@ legitimately differ per adapter (e.g. `fp8_base` only on the FLUX config).
 
 from __future__ import annotations
 
-import re
-import warnings
 from typing import Annotated, Literal
 
 from pydantic import (
@@ -42,11 +40,11 @@ from lorafactory.constants import (
 __all__ = ["ARCH_DEFAULTS", "ConfigSchemaError", "validate"]
 
 _SHA1_RE = r"^[0-9a-f]{40}$"
-_SHA1_ONLY = re.compile(_SHA1_RE)
-#: Relaxed: a full SHA, or anything branch/tag-shaped. Non-SHA values still
-#: work — see `_warn_unpinned_revisions` below, which flags them without
-#: blocking, preserving the reproducibility guarantee as a warning rather
-#: than turning it into friction for local/dev configs.
+#: Relaxed: a full SHA, or anything branch/tag-shaped. A repo we have a
+#: verified pin for (ARCH_DEFAULTS below) must still match it exactly — see
+#: `_reject_unpinned_revisions` — but a repo we have no pin for (a fork, a
+#: personal checkpoint) has no ground truth to hold to, so it can use
+#: whatever revision shape it needs.
 _REVISION_RE = r"^[0-9a-f]{40}$|^[A-Za-z0-9_.\-/]+$"
 
 #: Highest transformer block index of SD3-Medium (24 blocks, 0-23). Kept as
@@ -92,20 +90,13 @@ ARCH_DEFAULTS: dict[str, dict] = {
     },
 }
 
-#: repo -> verified HEAD sha, derived from ARCH_DEFAULTS above. Used only to
-#: warn on drift, never to block — see `_warn_unpinned_revisions`.
+#: repo -> verified HEAD sha, derived from ARCH_DEFAULTS above. A repo listed
+#: here must match its pin exactly — see `_reject_unpinned_revisions`.
 _VERIFIED_REVISIONS: dict[str, str] = {}
 for _arch_defaults in ARCH_DEFAULTS.values():
     _VERIFIED_REVISIONS[_arch_defaults["train_repo"]] = _arch_defaults["train_revision"]
     _VERIFIED_REVISIONS[_arch_defaults["eval_repo"]] = _arch_defaults["eval_revision"]
 del _arch_defaults
-
-#: The reverse of `_VERIFIED_REVISIONS`: every SHA we have actually verified,
-#: regardless of which repo it belongs to. Lets `_warn_unpinned_revisions`
-#: catch a SHA that IS a real verified pin, just copy-pasted next to the
-#: wrong (unrecognized) repo — worse than an unrecognized repo/SHA pair,
-#: which has no ground truth to contradict and is deliberately let through.
-_VERIFIED_SHAS: set[str] = set(_VERIFIED_REVISIONS.values())
 
 
 class ConfigSchemaError(Exception):
@@ -161,33 +152,26 @@ class ModelSection(_Section):
         return self
 
     @model_validator(mode="after")
-    def _warn_unpinned_revisions(self) -> ModelSection:
-        """Never blocks — see docs/superpowers/specs/2026-08-22-config-dx-relaxation-design.md."""
+    def _reject_unpinned_revisions(self) -> ModelSection:
+        """A repo we have a verified pin for must match it exactly — hard
+        stop, not a warning: a plausible-looking but wrong revision must fail
+        loudly, the same way a missing field does (see module docstring).
+
+        A repo with no verified pin (a fork, a personal checkpoint) has no
+        ground truth to hold to, so any revision the relaxed pattern accepts
+        (branch, tag, or SHA) passes through unchecked.
+        """
         for repo_field, rev_field in (
             ("train_repo", "train_revision"), ("eval_repo", "eval_revision"),
         ):
             repo, rev = getattr(self, repo_field), getattr(self, rev_field)
             if repo is None or rev is None:
                 continue
-            if not _SHA1_ONLY.fullmatch(rev):
-                warnings.warn(
-                    f"model.{rev_field} {rev!r} is not a pinned commit SHA — "
-                    "reproducibility is not guaranteed for this run",
-                    stacklevel=2,
-                )
-                continue
             expected = _VERIFIED_REVISIONS.get(repo)
             if expected is not None and rev != expected:
-                warnings.warn(
+                raise ValueError(
                     f"model.{rev_field} {rev!r} does not match the verified pin "
-                    f"for {repo} ({expected!r}) — reproducibility is not guaranteed",
-                    stacklevel=2,
-                )
-            elif expected is None and rev in _VERIFIED_SHAS:
-                warnings.warn(
-                    f"model.{rev_field} {rev!r} is a verified pin for a different "
-                    f"repo, not {repo!r} — reproducibility is not guaranteed",
-                    stacklevel=2,
+                    f"for {repo} ({expected!r})"
                 )
         return self
 

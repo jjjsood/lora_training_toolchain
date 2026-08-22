@@ -13,10 +13,10 @@ def test_validate_config_ok_on_a_real_matrix_config():
     assert "OK" in result.output
 
 
-def test_validate_config_warns_but_never_blocks_on_drifted_revision(tmp_path):
-    """The branch's headline guarantee: a drifted/non-SHA `train_revision`
-    (e.g. a branch name like 'main') is always a warning at the CLI level
-    too, never a raised exception or a non-zero exit code.
+def test_validate_config_hard_stops_on_drifted_revision(tmp_path):
+    """A verified repo's revision must match its pin exactly — a drifted
+    revision (e.g. a branch name like 'main') is a hard error at the CLI
+    level too, never a silent warning.
 
     `loader.resolve()` replaces an overridden section wholesale (never a
     deep merge), so the override below restates the whole `model` section
@@ -39,8 +39,9 @@ model:
 """)
     runner = CliRunner()
     result = runner.invoke(cli, ["validate-config", str(drifted)])
-    assert result.exit_code == 0, result.output
-    assert "OK" in result.output
+    assert result.exit_code != 0
+    assert "Traceback" not in result.output
+    assert "train_revision" in result.output
 
 
 def test_validate_config_reports_missing_field_in_one_line(tmp_path):

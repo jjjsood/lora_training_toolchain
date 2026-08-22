@@ -9,8 +9,6 @@ object every consumer downstream — emitter, runner, models, provenance —
 actually receives.
 """
 
-import warnings
-
 import pytest
 from pydantic import ValidationError
 
@@ -84,23 +82,23 @@ def test_model_without_arch_default_must_name_a_checkpoint_file():
         validate(data)
 
 
-def test_short_revision_still_validates_but_warns():
-    """Relaxed pattern accepts branch/tag-shaped strings; a non-pinned
-    revision is a warning, never a hard failure — see
-    docs/superpowers/specs/2026-08-22-config-dx-relaxation-design.md."""
+def test_branch_name_revision_on_a_verified_repo_hard_stops():
+    """Relaxed pattern accepts branch/tag-shaped strings syntactically, but a
+    repo we hold a verified pin for must still match it exactly — a branch
+    name there is a hard ConfigSchemaError, not a warning."""
     data = dict(resolve(MATRIX / "L-F.yaml").data)
     data["model"] = {**data["model"], "train_revision": "main"}
-    with pytest.warns(UserWarning, match="train_revision"):
+    with pytest.raises(ConfigSchemaError, match="train_revision"):
         validate(data)
 
 
-def test_sha_revision_not_matching_the_verified_pin_warns():
+def test_sha_revision_not_matching_the_verified_pin_hard_stops():
     data = dict(resolve(MATRIX / "L-F.yaml").data)
     data["model"] = {
         **data["model"],
         "train_revision": "0" * 40,
     }
-    with pytest.warns(UserWarning, match="does not match the verified pin"):
+    with pytest.raises(ConfigSchemaError, match="does not match the verified pin"):
         validate(data)
 
 
@@ -117,33 +115,18 @@ def test_arch_defaults_match_the_verified_pins():
         assert defaults["eval_revision"] == VERIFIED_REVISIONS[defaults["eval_repo"]]
 
 
-def test_foreign_repo_with_a_borrowed_verified_sha_warns():
-    """A SHA that IS a real verified pin, paired with a repo that is NOT the
-    one it was verified for (e.g. a careless copy-paste into a fork's
-    config), must warn — worse than an unrecognized repo/SHA pair with no
-    ground truth to contradict, which is deliberately let through silently."""
+def test_unrecognized_repo_revision_is_unchecked():
+    """A repo we hold no verified pin for has no ground truth to hold to —
+    any revision the relaxed pattern accepts passes through, even one that
+    happens to equal a DIFFERENT repo's verified pin (no way to tell that
+    apart from a coincidence without a pin for this repo too)."""
     data = dict(resolve(MATRIX / "L-F.yaml").data)
     data["model"] = {
         **data["model"],
         "train_repo": "me/my-fork",
         "train_revision": ARCH_DEFAULTS["flux"]["train_revision"],
     }
-    with pytest.warns(UserWarning, match="verified pin for a different repo"):
-        validate(data)
-
-
-def test_unrecognized_repo_and_unrecognized_sha_does_not_warn():
-    """The pre-existing, spec-sanctioned silent case: neither the repo nor
-    the SHA is anything we have ground truth for."""
-    data = dict(resolve(MATRIX / "L-F.yaml").data)
-    data["model"] = {
-        **data["model"],
-        "train_repo": "me/my-fork",
-        "train_revision": "b" * 40,
-    }
-    with warnings.catch_warnings():
-        warnings.simplefilter("error")
-        validate(data)
+    validate(data)
 
 
 def test_sd3_arch_default_fills_every_model_field():
@@ -164,13 +147,17 @@ def test_flux_arch_default_fills_every_model_field():
 
 
 def test_explicit_model_fields_override_arch_defaults():
-    with pytest.warns(UserWarning, match="does not match the verified pin"):
-        filled = ModelSection.model_validate({
-            "arch": "sd3",
-            "train_revision": "a" * 40,
-        })
+    """Overriding train_repo alongside train_revision keeps the pair
+    unverified (no pin exists for a fork), so the override is observable
+    without also tripping the hard-stop on a mismatched verified pin."""
+    filled = ModelSection.model_validate({
+        "arch": "sd3",
+        "train_repo": "me/my-fork",
+        "train_revision": "a" * 40,
+    })
     assert filled.train_revision == "a" * 40
-    assert filled.train_repo == ARCH_DEFAULTS["sd3"]["train_repo"]
+    assert filled.train_repo == "me/my-fork"
+    assert filled.eval_repo == ARCH_DEFAULTS["sd3"]["eval_repo"]
 
 
 def test_minimal_sd3_config_resolves_with_real_verified_pins():

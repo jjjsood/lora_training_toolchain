@@ -233,7 +233,7 @@ determinism: {}
 
 Every field left out above has a default (`dataset.resolution` → `1024`, `dataset.manifest` → `<path>/manifest.csv`, `determinism.*` → the required-reproducible values, `train.optimizer_type`/`save_model_as`/`gradient_checkpointing`/`logging_dir` → this repo's actual defaults). Anything the matched-budget matrix actually cares about — `train.seed`/`max_train_steps`/`learning_rate`/`train_batch_size`, `model.arch`, `target` — still has no default and must be stated, because those are exactly the values `check-budget` compares across the matrix.
 
-A revision doesn't have to be a commit SHA — a branch or tag name validates too — but only a 40-character SHA that matches the pin `tests/test_model_pins.py` verifies is a reproducibility claim. Anything else (a branch name, or a SHA that doesn't match) still trains; `resolve-config`/`validate-config` print a warning to say so, they don't fail.
+A revision doesn't have to be a commit SHA syntactically — a branch or tag name is accepted too — but `train_repo`/`eval_repo` for `sd3`/`flux` are repos this project holds an HF-API-verified pin for (`tests/test_model_pins.py`), and a config naming one of them must match that pin exactly: a branch name or a different SHA there is a hard `ConfigSchemaError`, not a warning. A repo this project has no pin for (a fork, a personal checkpoint) has no such requirement — any revision shape validates.
 
 ### Local datasets vs. remote datasets
 
@@ -427,7 +427,7 @@ Docker with the NVIDIA Container Toolkit (`--gpus all` must work) for anything t
 
 **SD3-Medium** and **FLUX.1-dev** are gated on Hugging Face: accept the licence, set `HF_TOKEN`. Revisions are pinned to commit SHAs and held by `tests/test_model_pins.py`, so they cannot drift back into plausible-looking but invented hashes. sd-scripts reads the SAI single-file layout, not the `-diffusers` repos — both are pinned, since conversion and eval need the diffusers one.
 
-`model.train_revision`/`model.eval_revision` also accept a branch or tag name, not only a full SHA — see [Configs](#configs) — but only the pinned SHA is a reproducibility claim; anything else warns rather than blocks.
+`model.train_revision`/`model.eval_revision` also accept a branch or tag name syntactically, not only a full SHA — but for these two pinned repos, anything other than the exact verified SHA is a hard `ConfigSchemaError` — see [Configs](#configs). The relaxed shape exists for repos with no verified pin at all, not to loosen these two.
 
 ### Data
 
