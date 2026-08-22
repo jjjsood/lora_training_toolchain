@@ -9,6 +9,8 @@ object every consumer downstream — emitter, runner, models, provenance —
 actually receives.
 """
 
+import warnings
+
 import pytest
 from pydantic import ValidationError
 
@@ -60,6 +62,16 @@ def test_wrong_type_is_rejected():
         validate(data)
 
 
+def test_non_string_arch_fails_cleanly_rather_than_raising_typeerror():
+    """`arch: [sd3]` (a YAML list, unhashable) must raise pydantic's own clean
+    `string_type` ConfigSchemaError, not a raw TypeError from
+    `ARCH_DEFAULTS.get()` — a regression from before arch defaults existed."""
+    data = dict(resolve(MATRIX / "L-F.yaml").data)
+    data["model"] = {**data["model"], "arch": ["sd3"]}
+    with pytest.raises(ConfigSchemaError):
+        validate(data)
+
+
 def test_model_without_arch_default_must_name_a_checkpoint_file():
     """An arch with no ARCH_DEFAULTS entry still requires every model field —
     only known archs (sd3, flux) get defaults."""
@@ -89,6 +101,48 @@ def test_sha_revision_not_matching_the_verified_pin_warns():
         "train_revision": "0" * 40,
     }
     with pytest.warns(UserWarning, match="does not match the verified pin"):
+        validate(data)
+
+
+def test_arch_defaults_match_the_verified_pins():
+    """`ARCH_DEFAULTS` (schema.py) is a fourth hand-kept copy of the same pins
+    `tests/test_model_pins.py` verifies against the HF API — nothing tied it
+    to that source of truth, so a pin could move there (the documented
+    procedure) and leave ARCH_DEFAULTS silently stale."""
+    from test_model_pins import VERIFIED_REVISIONS
+
+    for arch in ("sd3", "flux"):
+        defaults = ARCH_DEFAULTS[arch]
+        assert defaults["train_revision"] == VERIFIED_REVISIONS[defaults["train_repo"]]
+        assert defaults["eval_revision"] == VERIFIED_REVISIONS[defaults["eval_repo"]]
+
+
+def test_foreign_repo_with_a_borrowed_verified_sha_warns():
+    """A SHA that IS a real verified pin, paired with a repo that is NOT the
+    one it was verified for (e.g. a careless copy-paste into a fork's
+    config), must warn — worse than an unrecognized repo/SHA pair with no
+    ground truth to contradict, which is deliberately let through silently."""
+    data = dict(resolve(MATRIX / "L-F.yaml").data)
+    data["model"] = {
+        **data["model"],
+        "train_repo": "me/my-fork",
+        "train_revision": ARCH_DEFAULTS["flux"]["train_revision"],
+    }
+    with pytest.warns(UserWarning, match="verified pin for a different repo"):
+        validate(data)
+
+
+def test_unrecognized_repo_and_unrecognized_sha_does_not_warn():
+    """The pre-existing, spec-sanctioned silent case: neither the repo nor
+    the SHA is anything we have ground truth for."""
+    data = dict(resolve(MATRIX / "L-F.yaml").data)
+    data["model"] = {
+        **data["model"],
+        "train_repo": "me/my-fork",
+        "train_revision": "b" * 40,
+    }
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
         validate(data)
 
 
@@ -307,6 +361,31 @@ def test_dataset_source_without_type_and_with_repo_infers_remote():
         },
     })
     assert isinstance(section.source, RemoteDatasetSource)
+
+
+def test_dataset_source_with_typoed_repo_key_still_infers_remote():
+    """A typo'd `repo` key (e.g. `repos:`) must not be diagnosed as a local
+    source: the presence of any other remote-only key (revision/parquet/
+    licence/...) is enough to infer `remote`, so the resulting error is
+    about the missing `repo`, not about 'extra' fields that don't belong on
+    a local source."""
+    with pytest.raises(ValidationError) as excinfo:
+        DatasetSection.model_validate({
+            "name": "STYLE", "path": "STYLE", "manifest": "STYLE/manifest.csv",
+            "source": {
+                "repos": "huggan/few-shot-aurora",  # typo: should be 'repo'
+                "revision": "ccf645535bc3b5f755d03567374780ae9473d66b",
+                "parquet": "data/train-00000-of-00001.parquet",
+                "caption": "x", "author": "unknown", "licence": "unknown",
+                "licence_url": "https://example.com", "acquisition_date": "2026-08-08",
+            },
+        })
+    message = str(excinfo.value)
+    assert "repo" in message
+    # It must not be misdiagnosed as local and complain about the fields a
+    # remote source legitimately carries.
+    assert "revision" not in message
+    assert "parquet" not in message
 
 
 def test_dataset_source_without_type_and_without_repo_infers_local():

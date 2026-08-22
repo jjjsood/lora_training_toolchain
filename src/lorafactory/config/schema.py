@@ -100,6 +100,13 @@ for _arch_defaults in ARCH_DEFAULTS.values():
     _VERIFIED_REVISIONS[_arch_defaults["eval_repo"]] = _arch_defaults["eval_revision"]
 del _arch_defaults
 
+#: The reverse of `_VERIFIED_REVISIONS`: every SHA we have actually verified,
+#: regardless of which repo it belongs to. Lets `_warn_unpinned_revisions`
+#: catch a SHA that IS a real verified pin, just copy-pasted next to the
+#: wrong (unrecognized) repo — worse than an unrecognized repo/SHA pair,
+#: which has no ground truth to contradict and is deliberately let through.
+_VERIFIED_SHAS: set[str] = set(_VERIFIED_REVISIONS.values())
+
 
 class ConfigSchemaError(Exception):
     """A resolved config violates the schema."""
@@ -128,7 +135,11 @@ class ModelSection(_Section):
     def _fill_arch_defaults(cls, data):
         if not isinstance(data, dict):
             return data
-        defaults = ARCH_DEFAULTS.get(data.get("arch"))
+        arch = data.get("arch")
+        # `arch` must be hashable to key ARCH_DEFAULTS.get(); a non-string
+        # value (e.g. a YAML list) would otherwise raise a raw TypeError here,
+        # bypassing pydantic's own clean `string_type` error entirely.
+        defaults = ARCH_DEFAULTS.get(arch) if isinstance(arch, str) else None
         if not defaults:
             return data
         filled = dict(data)
@@ -170,6 +181,12 @@ class ModelSection(_Section):
                 warnings.warn(
                     f"model.{rev_field} {rev!r} does not match the verified pin "
                     f"for {repo} ({expected!r}) — reproducibility is not guaranteed",
+                    stacklevel=2,
+                )
+            elif expected is None and rev in _VERIFIED_SHAS:
+                warnings.warn(
+                    f"model.{rev_field} {rev!r} is a verified pin for a different "
+                    f"repo, not {repo!r} — reproducibility is not guaranteed",
                     stacklevel=2,
                 )
         return self
@@ -261,6 +278,14 @@ DatasetSourceSection = Annotated[
 ]
 
 
+#: Keys that only ever appear on a remote (HF) source. Used to infer `type`
+#: when it's omitted — checking all of them, not just `repo`, means a
+#: typo'd `repo` key (e.g. `repos:`) still gets diagnosed as a remote source
+#: with a missing `repo`, rather than as a local source with a pile of
+#: confusing "extra" fields (revision/parquet/licence/...) to delete.
+_REMOTE_ONLY_KEYS = ("repo", "revision", "parquet", "licence", "licence_url", "acquisition_date")
+
+
 class DatasetSection(_Section):
     name: StrictStr
     path: StrictStr
@@ -283,12 +308,13 @@ class DatasetSection(_Section):
     @field_validator("source", mode="before")
     @classmethod
     def _infer_source_type(cls, v):
-        """A `source` with no `type` but a `repo` is the pre-existing remote
-        shape (backward compat); otherwise it's a local source."""
+        """A `source` with no `type` but any remote-only key (`repo` — the
+        pre-existing backward-compat case — or `revision`/`parquet`/licence
+        metadata) is the remote shape; otherwise it's a local source."""
         if not isinstance(v, dict) or "type" in v:
             return v
         v = dict(v)
-        v["type"] = "remote" if v.get("repo") else "local"
+        v["type"] = "remote" if any(k in v for k in _REMOTE_ONLY_KEYS) else "local"
         return v
 
 

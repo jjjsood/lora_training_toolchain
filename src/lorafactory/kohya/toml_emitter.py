@@ -70,7 +70,12 @@ def _build_train_dict(config: dict, spec: NetworkSpec, engine: str,
     if engine == "flux" and model_paths.ae is not None:
         train["ae"] = str(model_paths.ae)
 
-    adapter_id = config.get("adapter_id", "adapter")
+    # A validated resolved dict always has the `adapter_id` key (the schema
+    # declares it with a default of None), so plain `.get(key, default)`
+    # would never see the fallback — use `or` the same way `cli._adapter_id`
+    # does, so a from-scratch config with no `adapter_id:` still names its
+    # kohya output rather than writing a literal `None`.
+    adapter_id = config.get("adapter_id") or "adapter"
     # kohya writes the trained adapter next to the TOML it was launched from:
     # the run directory the caller chose, never a path baked into the config.
     train["output_dir"] = str(train_toml_path.parent)

@@ -109,10 +109,10 @@ def _resolve_config(config_path: Path) -> ResolvedConfig:
     except ConfigViolation as exc:
         raise click.ClickException(str(exc)) from exc
     try:
-        validate(rc.data)
+        validated = validate(rc.data)
     except ConfigSchemaError as exc:
         raise click.ClickException(f"{config_path}: {exc}") from exc
-    return rc
+    return ResolvedConfig(data=validated.model_dump(), sha256=rc.sha256)
 
 
 def _adapter_id(config: dict, config_path: Path) -> str:

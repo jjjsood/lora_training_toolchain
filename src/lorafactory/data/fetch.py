@@ -2,10 +2,13 @@
 
 The matrix configs describe images acquired by hand; `datasets/README.md` is
 their contract and nothing here touches them. A config that *does* carry a
-`dataset.source` block declares its images as a pinned Hugging Face dataset
-(repo + 40-hex revision), and this module turns that declaration into a
-directory `check-dataset` accepts: `img_0001.png` / `img_0001.txt` pairs plus a
-`manifest.csv` whose provenance columns come straight out of the config.
+`dataset.source` block declares where its images come from — either a pinned
+Hugging Face dataset (repo + 40-hex revision), or a directory that already
+lives on disk (`type: local`, no HF metadata required) — and this module
+turns that declaration into a directory `check-dataset` accepts:
+`img_0001.png` / `img_0001.txt` pairs plus a `manifest.csv` whose provenance
+columns come straight out of the config (filled with local-only placeholders
+when a local source doesn't supply them).
 
 Deliberately split like ``lorafactory.models``:
 
