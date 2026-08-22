@@ -278,12 +278,21 @@ DatasetSourceSection = Annotated[
 ]
 
 
-#: Keys that only ever appear on a remote (HF) source. Used to infer `type`
-#: when it's omitted — checking all of them, not just `repo`, means a
-#: typo'd `repo` key (e.g. `repos:`) still gets diagnosed as a remote source
-#: with a missing `repo`, rather than as a local source with a pile of
-#: confusing "extra" fields (revision/parquet/licence/...) to delete.
-_REMOTE_ONLY_KEYS = ("repo", "revision", "parquet", "licence", "licence_url", "acquisition_date")
+#: Keys that only ever appear on a remote (HF) source — i.e. genuinely absent
+#: from `LocalDatasetSource` entirely. Used to infer `type` when it's
+#: omitted — checking all of them, not just `repo`, means a typo'd `repo` key
+#: (e.g. `repos:`) still gets diagnosed as a remote source with a missing
+#: `repo`, rather than as a local source with a pile of confusing "extra"
+#: fields (revision/parquet/...) to delete.
+#:
+#: `licence`/`licence_url`/`acquisition_date` are deliberately NOT here even
+#: though `RemoteDatasetSource` requires them: `LocalDatasetSource` also
+#: models them as optional fields (filled with sentinel defaults by
+#: `data/fetch.py` when a local config omits them), so including them here
+#: misclassified a genuinely local source that happens to supply e.g.
+#: `licence: "CC0"` as remote, and it then failed validation (missing
+#: `repo`/`revision`, `path` reported as extra).
+_REMOTE_ONLY_KEYS = ("repo", "revision", "parquet")
 
 
 class DatasetSection(_Section):

@@ -16,6 +16,7 @@ import pytest
 
 from conftest import MATRIX
 from lorafactory.config.loader import resolve
+from lorafactory.config.schema import validate
 from lorafactory.kohya.network_args import TargetSpecError, build_network_args
 
 MOD_OFF = {"context_mod_dim=0", "x_mod_dim=0"}
@@ -212,6 +213,22 @@ def test_out_of_range_blocks_rejected():
     cfg["target"]["blocks"] = [0, 24]
     with pytest.raises(TargetSpecError):
         build_network_args(cfg)
+
+
+def test_sd3_omitted_blocks_key_uses_full_range():
+    """Regression: `_resolve_config` (C1) always emits `target.blocks` in the
+    dumped dict, as `None` when the config never set it — the pre-C1 dict
+    simply omitted the key. `target.blocks` absent is the documented SD3
+    "train everything" convention (schema.py), so a `.get("blocks", default)`
+    idiom that only falls back on a MISSING key must not crash when the key
+    is present with value `None`."""
+    data = dict(resolve(MATRIX / "L-F.yaml").data)
+    data["target"] = {k: v for k, v in data["target"].items() if k != "blocks"}
+    resolved = validate(data)
+    assert resolved.target.blocks is None
+
+    spec = build_network_args(resolved.model_dump())
+    assert "train_block_indices=0-23" in spec.network_args
 
 
 def test_empty_module_classes_rejected():

@@ -89,7 +89,12 @@ def _block_index_arg(key: str, pair: list[int] | None, max_index: int) -> str:
 
 def _sd3_transformer_args(target: dict, module_classes: list[str]) -> list[str]:
     """SD3 (`networks.lora_sd3`) transformer targeting. Unchanged emission."""
-    lo, hi = target.get("blocks", [MIN_BLOCK, MAX_BLOCK])
+    # A validated resolved dict always has the `blocks` key (the schema
+    # declares it with a default of None), so plain `.get(key, default)`
+    # would never see the fallback — use `or` the same way toml_emitter's
+    # `adapter_id` does, so the SD3 "train everything" convention (blocks
+    # omitted entirely) still resolves to the full range.
+    lo, hi = target.get("blocks") or [MIN_BLOCK, MAX_BLOCK]
     if not (MIN_BLOCK <= lo <= MAX_BLOCK) or not (MIN_BLOCK <= hi <= MAX_BLOCK):
         raise TargetSpecError(
             f"target.blocks {[lo, hi]} out of bounds {MIN_BLOCK}..{MAX_BLOCK}"

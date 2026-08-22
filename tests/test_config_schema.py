@@ -396,6 +396,23 @@ def test_dataset_source_without_type_and_without_repo_infers_local():
     assert isinstance(section.source, LocalDatasetSource)
 
 
+def test_local_source_with_optional_licence_fields_is_not_misdiagnosed_remote():
+    """Regression: I3's `_REMOTE_ONLY_KEYS` over-corrected by including
+    `licence`/`licence_url`/`acquisition_date` — fields that are also valid
+    OPTIONAL fields on `LocalDatasetSource` itself. A genuinely local,
+    `type`-less source that happens to fill them in must still infer
+    `local`, not get misclassified as `remote` (and then fail validation for
+    a missing `repo`/`revision` and a now-'extra' `path`)."""
+    section = DatasetSection.model_validate({
+        "name": "STYLE", "path": "STYLE",
+        "source": {
+            "path": "STYLE", "caption": "x", "licence": "CC0",
+            "licence_url": "https://example.com/cc0", "acquisition_date": "2026-08-08",
+        },
+    })
+    assert isinstance(section.source, LocalDatasetSource)
+
+
 def test_dataset_section_resolution_defaults_to_1024():
     section = DatasetSection.model_validate({
         "name": "STYLE", "path": "STYLE", "manifest": "STYLE/manifest.csv",
