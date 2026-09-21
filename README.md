@@ -515,7 +515,7 @@ Everything downstream waits on images with resolved licensing.
 
 ## License
 
-[MIT](LICENSE) — this code only. The models and artefacts carry their own terms:
+[MIT](LICENSE) @ Johannes Sood 2026 — this code only. The models and artefacts carry their own terms:
 
 - **SD3-Medium** and **FLUX.1-dev** are gated, non-commercial licences requiring acceptance on Hugging Face.
 - Trained adapters inherit the base model's licence; an MIT trainer does not make a non-commercial checkpoint commercial.
